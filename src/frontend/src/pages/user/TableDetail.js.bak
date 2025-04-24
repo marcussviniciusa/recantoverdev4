@@ -1,0 +1,1204 @@
+import React, { useState, useEffect, useCallback } from 'react';
+import { useParams, useNavigate } from 'react-router-dom';
+import {
+  Box,
+  Typography,
+  Paper,
+  Divider,
+  Grid,
+  Button,
+  Card,
+  CardContent,
+  CardActions,
+  CardMedia,
+  Chip,
+  CircularProgress,
+  Avatar,
+  List,
+  ListItem,
+  ListItemText,
+  ListItemAvatar,
+  IconButton,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  TextField,
+  Snackbar,
+  Alert,
+  Tabs,
+  Tab,
+  Badge,
+  Fab,
+  useTheme
+} from '@mui/material';
+import {
+  TableBar as TableIcon,
+  Restaurant as RestaurantIcon,
+  ReceiptLong as ReceiptIcon,
+  People as PeopleIcon,
+  ArrowBack as ArrowBackIcon,
+  Add as AddIcon,
+  Add,
+  Remove,
+  Edit as EditIcon,
+  Delete as DeleteIcon,
+  Close as CloseIcon,
+  WhatsApp as WhatsAppIcon,
+  Money as MoneyIcon,
+  PersonAdd as PersonAddIcon,
+  SwapHoriz as SwapHorizIcon,
+  AccessTime as TimeIcon,
+  CheckCircle as CheckCircleIcon
+} from '@mui/icons-material';
+import { format, parseISO, formatDistanceToNow } from 'date-fns';
+import { ptBR } from 'date-fns/locale';
+import { useSocket } from '../../contexts/SocketContext';
+import { useAuth } from '../../contexts/AuthContext';
+import api from '../../services/api';
+
+const TableDetail = () => {
+  const { id } = useParams();
+  const theme = useTheme();
+  const navigate = useNavigate();
+  const { currentUser } = useAuth();
+  const { listen, emit } = useSocket();
+  
+  // Estados
+  const [mesa, setMesa] = useState(null);
+  const [pedidos, setPedidos] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [activeTab, setActiveTab] = useState(0);
+  const [categorias, setCategorias] = useState([]);
+  const [itensCardapio, setItensCardapio] = useState([]);
+  const [loadingCardapio, setLoadingCardapio] = useState(false);
+  const [snackbar, setSnackbar] = useState({
+    open: false,
+    message: '',
+    severity: 'success'
+  });
+  
+  // Diálogos
+  const [openAdicionarClientes, setOpenAdicionarClientes] = useState(false);
+  const [numClientesForm, setNumClientesForm] = useState('');
+  const [openMenuDialog, setOpenMenuDialog] = useState(false);
+  
+  // Cores para status das mesas
+  const mesaStatusColors = {
+    disponivel: theme.palette.success.main,
+    ocupada: theme.palette.warning.main,
+    reservada: theme.palette.info.main,
+    manutencao: theme.palette.error.main
+  };
+
+  // Obter texto legível para o status
+  const getStatusText = (status) => {
+    switch (status) {
+      case 'disponivel': return 'Disponível';
+      case 'ocupada': return 'Ocupada';
+      case 'reservada': return 'Reservada';
+      case 'manutencao': return 'Manutenção';
+      default: return status;
+    }
+  };
+
+  // Obter texto para área de localização
+  const getAreaText = (area) => {
+    switch (area) {
+      case 'interna': return 'Interna';
+      case 'externa': return 'Externa';
+      case 'varanda': return 'Varanda';
+      case 'privativa': return 'Privativa';
+      default: return area;
+    }
+  };
+
+  // Mostrar snackbar
+  const showSnackbar = useCallback((message, severity = 'success') => {
+    setSnackbar({
+      open: true,
+      message,
+      severity
+    });
+  }, []);
+
+  // Buscar detalhes da mesa
+  const fetchMesaDetails = useCallback(async () => {
+    try {
+      setLoading(true);
+      const response = await api.get(`/api/mesas/${id}`);
+      if (response.data.success) {
+        setMesa(response.data.data);
+      }
+    } catch (error) {
+      console.error('Erro ao buscar detalhes da mesa:', error);
+      showSnackbar('Erro ao carregar detalhes da mesa', 'error');
+    } finally {
+      setLoading(false);
+    }
+  }, [id, showSnackbar]);
+
+  // Buscar pedidos da mesa
+  const fetchPedidos = useCallback(async () => {
+    try {
+      const response = await api.get(`/api/pedidos/mesa/${id}`);
+      if (response.data.success) {
+        setPedidos(response.data.data);
+      }
+    } catch (error) {
+      console.error('Erro ao buscar pedidos:', error);
+      showSnackbar('Erro ao carregar pedidos da mesa', 'error');
+    }
+  }, [id, showSnackbar]);
+
+  // Buscar itens do cardápio
+  const fetchCardapio = useCallback(async () => {
+    try {
+      setLoadingCardapio(true);
+      
+      // Buscar categorias
+      const categoriasResponse = await api.get('/api/cardapio/categorias');
+      if (categoriasResponse.data.success) {
+        setCategorias(categoriasResponse.data.data);
+      }
+      
+      // Buscar itens
+      const itensResponse = await api.get('/api/cardapio/itens');
+      if (itensResponse.data.success) {
+        setItensCardapio(itensResponse.data.data);
+      }
+    } catch (error) {
+      console.error('Erro ao buscar cardápio:', error);
+      showSnackbar('Erro ao carregar o cardápio', 'error');
+    } finally {
+      setLoadingCardapio(false);
+    }
+  }, [showSnackbar]);
+
+  // useEffect foi movido para depois das definiu00e7u00f5es das funu00e7u00f5es que ele utiliza
+  
+  // Adicionar clientes à mesa
+  const handleAdicionarClientes = async () => {
+    try {
+      const numClientes = parseInt(numClientesForm);
+      
+      if (!numClientes || numClientes <= 0) {
+        showSnackbar('Informe um número válido de clientes', 'error');
+        return;
+      }
+      
+      const response = await api.post(`/api/mesas/${id}/adicionar-cliente`, {
+        numClientes
+      });
+      
+      if (response.data.success) {
+        setMesa(response.data.data);
+        showSnackbar(`${numClientes} cliente(s) adicionado(s) com sucesso`, 'success');
+        setOpenAdicionarClientes(false);
+        
+        // Emitir evento de atualização para todos os clientes
+        emit('mesa_atualizada', {
+          id,
+          status: 'ocupada',
+          ocupacaoAtual: response.data.data.ocupacaoAtual
+        });
+      }
+    } catch (error) {
+      const errorMessage = error.response?.data?.message || 'Ocorreu um erro ao adicionar clientes';
+      showSnackbar(errorMessage, 'error');
+    }
+  };
+  
+  // A função fetchCardapio já foi definida anteriormente
+
+  // Liberar mesa
+  const handleLiberarMesa = async () => {
+    // Verificar se há pedidos abertos
+    const pedidosAbertos = pedidos.filter(pedido => 
+      pedido.status !== 'pago' && pedido.status !== 'cancelado'
+    );
+    
+    if (pedidosAbertos.length > 0) {
+      showSnackbar('Não é possível liberar a mesa com pedidos em aberto', 'error');
+      return;
+    }
+    
+    try {
+      // Enviando um objeto vazio explicitamente como corpo da requisição
+      const response = await api.post(`/api/mesas/${id}/liberar`, {});
+      
+      if (response.data.success) {
+        showSnackbar('Mesa liberada com sucesso', 'success');
+        
+        // Emitir evento de atualização para todos os clientes
+        emit('mesa_atualizada', {
+          id,
+          status: 'disponivel',
+          statusAnterior: 'ocupada',
+          ocupacaoAtual: null
+        });
+        
+        // Redirecionar para a página de mesas
+        navigate('/tables');
+      }
+    } catch (error) {
+      const errorMessage = error.response?.data?.message || 'Ocorreu um erro ao liberar a mesa';
+      showSnackbar(errorMessage, 'error');
+    }
+  };
+  
+  // Enviar comanda por WhatsApp
+  const handleEnviarComanda = async () => {
+    try {
+      const response = await api.post(`/api/pedidos/mesa/${id}/enviar-comanda`);
+      
+      if (response.data.success) {
+        showSnackbar('Comanda enviada com sucesso para o WhatsApp', 'success');
+      }
+    } catch (error) {
+      const errorMessage = error.response?.data?.message || 'Ocorreu um erro ao enviar comanda';
+      showSnackbar(errorMessage, 'error');
+    }
+  };
+  
+  // Formatar data para exibição
+  const formatDateTime = (dateString) => {
+    if (!dateString) return '';
+    const date = new Date(dateString);
+    return format(date, "dd/MM/yyyy 'às' HH:mm", { locale: ptBR });
+  };
+  
+  // Calcular tempo decorrido
+  const getElapsedTime = (dateString) => {
+    if (!dateString) return '';
+    try {
+      const date = parseISO(dateString);
+      return formatDistanceToNow(date, { addSuffix: true, locale: ptBR });
+    } catch (error) {
+      return '';
+    }
+  };
+  
+  // Estados para o novo pedido
+  const [carrinho, setCarrinho] = useState([]);
+  const [observacoes, setObservacoes] = useState({});
+
+  // Adicionar item ao carrinho
+  const handleAddItemToCart = (item, quantidade = 1) => {
+    setCarrinho(prev => {
+      // Verificar se o item já está no carrinho
+      const index = prev.findIndex(i => i.item._id === item._id);
+      
+      if (index !== -1) {
+        // Se já existir, apenas incrementar a quantidade
+        const newCart = [...prev];
+        newCart[index].quantidade += quantidade;
+        return newCart;
+      } else {
+        // Se não existir, adicionar novo item
+        return [...prev, {
+          item,
+          quantidade,
+          preco: item.preco
+        }];
+      }
+    });
+  };
+
+  // Remover item do carrinho
+  const handleRemoveItemFromCart = (itemId) => {
+    setCarrinho(prev => prev.filter(i => i.item._id !== itemId));
+    // Remover observações também
+    setObservacoes(prev => {
+      const newObs = {...prev};
+      delete newObs[itemId];
+      return newObs;
+    });
+  };
+
+  // Atualizar quantidade de um item
+  const handleUpdateItemQuantity = (itemId, newQuantity) => {
+    if (newQuantity <= 0) {
+      handleRemoveItemFromCart(itemId);
+      return;
+    }
+    
+    setCarrinho(prev => prev.map(item => 
+      item.item._id === itemId ? {...item, quantidade: newQuantity} : item
+    ));
+  };
+
+  // Atualizar observação de um item
+  const handleUpdateObservacao = (itemId, text) => {
+    setObservacoes(prev => ({
+      ...prev,
+      [itemId]: text
+    }));
+  };
+
+  // Finalizar pedido
+  const handleFinalizarPedido = async () => {
+    if (carrinho.length === 0) {
+      showSnackbar('Adicione pelo menos um item ao pedido', 'error');
+      return;
+    }
+
+    try {
+      // Formatar itens para envio - ajustando para o formato esperado pelo backend
+      const itens = carrinho.map(item => ({
+        itemId: item.item._id,        // Backend espera itemId em vez de item
+        quantidade: item.quantidade,
+        preco: item.preco,
+        observacao: observacoes[item.item._id] || ''
+      }));
+
+      // Garantir que o token está sendo enviado
+      const token = localStorage.getItem('token');
+      if (token && !api.defaults.headers.common['Authorization']) {
+        api.defaults.headers.common['Authorization'] = `Bearer ${token}`;
+      }
+
+      console.log('Enviando pedido:', { mesa: id, itens });
+      const response = await api.post('/api/pedidos', {
+        mesa: id,
+        itens
+      });
+
+      if (response.data.success) {
+        showSnackbar('Pedido criado com sucesso', 'success');
+        // Limpar carrinho
+        setCarrinho([]);
+        setObservacoes({});
+        // Fechar diálogo
+        setOpenMenuDialog(false);
+        // Atualizar lista de pedidos
+        fetchPedidos();
+      }
+    } catch (error) {
+      const errorMessage = error.response?.data?.message || 'Erro ao criar pedido';
+      showSnackbar(errorMessage, 'error');
+    }
+  };
+
+  // Criar novo pedido
+  const handleNovoPedido = () => {
+    // Limpar carrinho antes de abrir
+    setCarrinho([]);
+    setObservacoes({});
+    // Abrir diálogo de cardápio
+    setOpenMenuDialog(true);
+  };
+  
+  // Fechar snackbar
+  const handleCloseSnackbar = () => {
+    setSnackbar(prev => ({
+      ...prev,
+      open: false
+    }));
+  };
+  
+  // Calcular total de um pedido
+  const calcularTotalPedido = (pedido) => {
+    if (!pedido || !pedido.itens || pedido.itens.length === 0) return 0;
+    
+    return pedido.itens.reduce((total, item) => {
+      return total + (item.preco * item.quantidade);
+    }, 0);
+  };
+  
+  // Calcular total de todos os pedidos
+  const calcularTotalGeral = () => {
+    if (!pedidos || pedidos.length === 0) return 0;
+    
+    const total = pedidos.reduce((sum, pedido) => {
+      // Só considerar pedidos não cancelados
+      if (pedido.status !== 'cancelado') {
+        return sum + calcularTotalPedido(pedido);
+      }
+      return sum;
+    }, 0);
+    
+    return total;
+  };
+  
+  // Obter cor para status do pedido
+  const getStatusPedidoColor = (status) => {
+    switch (status) {
+      case 'pendente': return theme.palette.info.main;
+      case 'em_preparo': return theme.palette.warning.main;
+      case 'pronto': return theme.palette.success.main;
+      case 'entregue': return theme.palette.success.dark;
+      case 'pago': return theme.palette.primary.main;
+      case 'cancelado': return theme.palette.error.main;
+      default: return theme.palette.grey[500];
+    }
+  };
+  
+  // Obter texto para status do pedido
+  const getStatusPedidoText = (status) => {
+    switch (status) {
+      case 'pendente': return 'Pendente';
+      case 'em_preparo': return 'Em preparo';
+      case 'pronto': return 'Pronto';
+      case 'entregue': return 'Entregue';
+      case 'pago': return 'Pago';
+      case 'cancelado': return 'Cancelado';
+      default: return status;
+    }
+  };
+  
+  // Renderizar conteúdo da aba "Detalhes"
+  const renderDetalhesTab = () => (
+    <Paper sx={{ p: 2, mt: 2 }}>
+      <Typography variant="subtitle1" fontWeight="bold" gutterBottom>
+        Informações da Mesa
+      </Typography>
+      <Divider sx={{ mb: 2 }} />
+      
+      <Grid container spacing={2}>
+        <Grid item xs={6}>
+          <Typography variant="body2" color="text.secondary">
+            Número
+          </Typography>
+          <Typography variant="body1" fontWeight="medium">
+            {mesa?.numero || '-'}
+          </Typography>
+        </Grid>
+        
+        <Grid item xs={6}>
+          <Typography variant="body2" color="text.secondary">
+            Status
+          </Typography>
+          <Chip 
+            label={getStatusText(mesa?.status)}
+            size="small"
+            sx={{ 
+              bgcolor: mesaStatusColors[mesa?.status],
+              color: 'white',
+              fontWeight: 'medium'
+            }}
+          />
+        </Grid>
+        
+        <Grid item xs={6}>
+          <Typography variant="body2" color="text.secondary">
+            Capacidade
+          </Typography>
+          <Typography variant="body1">
+            {mesa?.capacidade || '-'} pessoas
+          </Typography>
+        </Grid>
+        
+        <Grid item xs={6}>
+          <Typography variant="body2" color="text.secondary">
+            Localização
+          </Typography>
+          <Typography variant="body1">
+            {mesa?.localizacao ? getAreaText(mesa.localizacao.area) : '-'}
+          </Typography>
+        </Grid>
+      </Grid>
+      
+      <Divider sx={{ my: 2 }} />
+      
+      <Typography variant="subtitle1" fontWeight="bold" gutterBottom>
+        Ocupação Atual
+      </Typography>
+      
+      {mesa?.ocupacaoAtual ? (
+        <Grid container spacing={2}>
+          <Grid item xs={6}>
+            <Typography variant="body2" color="text.secondary">
+              Clientes
+            </Typography>
+            <Typography variant="body1" display="flex" alignItems="center" gap={0.5}>
+              <PeopleIcon color="primary" fontSize="small" />
+              {mesa.ocupacaoAtual.clientes} pessoas
+            </Typography>
+          </Grid>
+          
+          <Grid item xs={6}>
+            <Typography variant="body2" color="text.secondary">
+              Início
+            </Typography>
+            <Typography variant="body1" display="flex" alignItems="center" gap={0.5}>
+              <TimeIcon color="action" fontSize="small" />
+              {formatDateTime(mesa.ocupacaoAtual.inicioAtendimento)}
+            </Typography>
+            <Typography variant="caption" color="text.secondary">
+              {getElapsedTime(mesa.ocupacaoAtual.inicioAtendimento)}
+            </Typography>
+          </Grid>
+          
+          <Grid item xs={12}>
+            <Typography variant="body2" color="text.secondary">
+              Garçom responsável
+            </Typography>
+            <Typography variant="body1">
+              {mesa.ocupacaoAtual.garcom?.nome || currentUser?.nome || 'Não definido'}
+            </Typography>
+          </Grid>
+        </Grid>
+      ) : (
+        <Typography variant="body1" color="text.secondary">
+          Mesa não está ocupada no momento.
+        </Typography>
+      )}
+    </Paper>
+  );
+  
+  // Renderizar conteúdo da aba "Pedidos"
+  const renderPedidosTab = () => (
+    <Box sx={{ mt: 2 }}>
+      {pedidos.length === 0 ? (
+        <Paper sx={{ p: 4, textAlign: 'center' }}>
+          <Typography variant="h6" color="text.secondary" gutterBottom>
+            Nenhum pedido registrado
+          </Typography>
+          <Typography variant="body2" color="text.secondary" paragraph>
+            Esta mesa ainda não possui pedidos registrados.
+          </Typography>
+          <Button 
+            variant="contained" 
+            startIcon={<AddIcon />}
+            onClick={handleNovoPedido}
+          >
+            Novo Pedido
+          </Button>
+        </Paper>
+      ) : (
+        <>
+          <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+            <Typography variant="subtitle1" fontWeight="bold">
+              Pedidos da Mesa
+            </Typography>
+            <Button 
+              variant="contained" 
+              size="small"
+              startIcon={<AddIcon />}
+              onClick={handleNovoPedido}
+            >
+              Novo Pedido
+            </Button>
+          </Box>
+          
+          {pedidos.map((pedido) => (
+            <Card key={pedido._id} sx={{ mb: 2 }}>
+              <CardContent>
+                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
+                  <Typography variant="subtitle1" fontWeight="medium">
+                    Pedido #{pedido.numeroPedido}
+                  </Typography>
+                  <Chip 
+                    label={getStatusPedidoText(pedido.status)}
+                    size="small"
+                    sx={{ 
+                      bgcolor: getStatusPedidoColor(pedido.status),
+                      color: 'white',
+                      fontWeight: 'medium'
+                    }}
+                  />
+                </Box>
+                
+                <Typography variant="caption" color="text.secondary" display="block">
+                  {formatDateTime(pedido.createdAt)}
+                  {' • '}
+                  {getElapsedTime(pedido.createdAt)}
+                </Typography>
+                
+                <Divider sx={{ my: 1 }} />
+                
+                <List dense disablePadding>
+                  {pedido.itens.map((item, index) => (
+                    <ListItem 
+                      key={index} 
+                      disablePadding
+                      sx={{ py: 0.5 }}
+                      secondaryAction={
+                        <Typography variant="body2">
+                          R$ {(item.preco * item.quantidade).toFixed(2)}
+                        </Typography>
+                      }
+                    >
+                      <ListItemText
+                        primary={
+                          <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                            <Badge 
+                              badgeContent={item.quantidade} 
+                              color="primary"
+                              sx={{ mr: 1 }}
+                            >
+                              <RestaurantIcon color="action" fontSize="small" />
+                            </Badge>
+                            <Typography variant="body2">
+                              {item.nome}
+                            </Typography>
+                          </Box>
+                        }
+                        secondary={
+                          <Typography variant="caption" color="text.secondary">
+                            {item.quantidade} x R$ {item.preco.toFixed(2)}
+                            {item.observacao && ` • ${item.observacao}`}
+                          </Typography>
+                        }
+                      />
+                    </ListItem>
+                  ))}
+                </List>
+                
+                <Divider sx={{ my: 1 }} />
+                
+                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <Typography variant="body2" fontWeight="medium">
+                    Total
+                  </Typography>
+                  <Typography variant="body1" fontWeight="bold">
+                    R$ {calcularTotalPedido(pedido).toFixed(2)}
+                  </Typography>
+                </Box>
+                
+                <Box sx={{ mt: 2, display: 'flex', justifyContent: 'flex-end', gap: 1 }}>
+                  {pedido.status === 'pendente' && (
+                    <Button
+                      size="small"
+                      startIcon={<EditIcon />}
+                      onClick={() => navigate(`/orders/${pedido._id}/edit`)}
+                    >
+                      Editar
+                    </Button>
+                  )}
+                  
+                  {pedido.status === 'pendente' && (
+                    <Button
+                      size="small"
+                      color="error"
+                      startIcon={<DeleteIcon />}
+                      onClick={() => {/* TODO: Implementar cancelamento */}}
+                    >
+                      Cancelar
+                    </Button>
+                  )}
+                  
+                  {pedido.status === 'pronto' && (
+                    <Button
+                      size="small"
+                      color="success"
+                      onClick={() => {/* TODO: Implementar entrega */}}
+                    >
+                      Marcar Entregue
+                    </Button>
+                  )}
+                </Box>
+              </CardContent>
+            </Card>
+          ))}
+          
+          <Paper sx={{ p: 2, mt: 2 }}>
+            <Typography variant="subtitle1" fontWeight="bold" gutterBottom>
+              Resumo Financeiro
+            </Typography>
+            
+            <Grid container spacing={2}>
+              <Grid item xs={6}>
+                <Typography variant="body2" color="text.secondary">
+                  Total de Pedidos
+                </Typography>
+                <Typography variant="body1">
+                  {pedidos.filter(p => p.status !== 'cancelado').length}
+                </Typography>
+              </Grid>
+              
+              <Grid item xs={6}>
+                <Typography variant="body2" color="text.secondary">
+                  Valor Total
+                </Typography>
+                <Typography variant="h6" color="primary" fontWeight="bold">
+                  R$ {calcularTotalGeral().toFixed(2)}
+                </Typography>
+              </Grid>
+            </Grid>
+          </Paper>
+        </>
+      )}
+    </Box>
+  );
+  
+  // Renderizar conteúdo da aba "Ações"
+  const renderAcoesTab = () => (
+    <Box sx={{ mt: 2 }}>
+      <Grid container spacing={2}>
+        <Grid item xs={12}>
+          <Paper sx={{ p: 2 }}>
+            <Typography variant="subtitle1" fontWeight="bold" gutterBottom>
+              Ações Disponíveis
+            </Typography>
+            <Divider sx={{ mb: 2 }} />
+            
+            <Grid container spacing={2}>
+              <Grid item xs={6}>
+                <Button
+                  fullWidth
+                  variant="outlined"
+                  size="large"
+                  startIcon={<PersonAddIcon />}
+                  onClick={() => setOpenAdicionarClientes(true)}
+                  sx={{ height: '100%' }}
+                >
+                  Adicionar Clientes
+                </Button>
+              </Grid>
+              
+              <Grid item xs={6}>
+                <Button
+                  fullWidth
+                  variant="outlined"
+                  size="large"
+                  startIcon={<SwapHorizIcon />}
+                  onClick={() => {/* TODO: Implementar transferência */}}
+                  sx={{ height: '100%' }}
+                >
+                  Transferir Mesa
+                </Button>
+              </Grid>
+              
+              <Grid item xs={6}>
+                <Button
+                  fullWidth
+                  variant="outlined"
+                  color="info"
+                  size="large"
+                  startIcon={<WhatsAppIcon />}
+                  onClick={handleEnviarComanda}
+                  sx={{ height: '100%' }}
+                >
+                  Enviar Comanda
+                </Button>
+              </Grid>
+              
+              <Grid item xs={6}>
+                <Button
+                  fullWidth
+                  variant="outlined"
+                  color="primary"
+                  size="large"
+                  startIcon={<MoneyIcon />}
+                  onClick={() => navigate(`/payment/${id}`)}
+                  sx={{ height: '100%' }}
+                >
+                  Pagamento
+                </Button>
+              </Grid>
+              
+              <Grid item xs={12}>
+                <Button
+                  fullWidth
+                  variant="contained"
+                  color="error"
+                  size="large"
+                  startIcon={<CloseIcon />}
+                  onClick={handleLiberarMesa}
+                >
+                  Liberar Mesa
+                </Button>
+              </Grid>
+            </Grid>
+          </Paper>
+        </Grid>
+      </Grid>
+    </Box>
+  );
+  
+  if (loading && !mesa) {
+    return (
+      <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '80vh' }}>
+        <CircularProgress />
+      </Box>
+    );
+  }
+  
+  // Renderizar o diálogo do cardápio
+  const renderMenuDialog = () => (
+    <Dialog
+      open={openMenuDialog}
+      onClose={() => setOpenMenuDialog(false)}
+      fullWidth
+      maxWidth="md"
+      scroll="paper"
+    >
+      <DialogTitle>
+        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <Typography variant="h6">Cardápio</Typography>
+          <Box>
+            <Chip
+              icon={<RestaurantIcon />}
+              label={`${carrinho.length} ${carrinho.length === 1 ? 'item' : 'itens'}`}
+              color="primary"
+              sx={{ mr: 1 }}
+            />
+            <IconButton onClick={() => setOpenMenuDialog(false)}>
+              <CloseIcon />
+            </IconButton>
+          </Box>
+        </Box>
+      </DialogTitle>
+      
+      <DialogContent dividers>
+        {loadingCardapio ? (
+          <Box sx={{ display: 'flex', justifyContent: 'center', p: 3 }}>
+            <CircularProgress />
+          </Box>
+        ) : (
+          <Box>
+            {categorias.length === 0 ? (
+              <Typography color="text.secondary" align="center" sx={{ py: 3 }}>
+                Nenhuma categoria encontrada no cardápio.
+              </Typography>
+            ) : (
+              <Box>
+                {/* Categorias e itens */}
+                {categorias.map(categoria => {
+                  // Filtrar itens da categoria atual
+                  const itensDaCategoria = itensCardapio.filter(
+                    item => (typeof item.categoria === 'object' ? 
+                      item.categoria?._id === categoria._id : 
+                      item.categoria === categoria._id)
+                  );
+                  
+                  if (itensDaCategoria.length === 0) return null;
+                  
+                  return (
+                    <Box key={categoria._id} sx={{ mb: 4 }}>
+                      <Typography
+                        variant="h6"
+                        sx={{
+                          borderBottom: `2px solid ${theme.palette.primary.main}`,
+                          pb: 1,
+                          mb: 2
+                        }}
+                      >
+                        {categoria.nome}
+                      </Typography>
+                      
+                      <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 2 }}>
+                        {itensDaCategoria.map(item => (
+                          <Box key={item._id} sx={{ width: { xs: '100%', sm: '48%', md: '31%' } }}>
+                            <Card
+                              variant="outlined"
+                              sx={{
+                                height: '100%',
+                                display: 'flex',
+                                flexDirection: 'column',
+                                cursor: 'pointer'
+                              }}
+                              onClick={() => handleAddItemToCart(item)}
+                            >
+                              {item.imagem && (
+                                <CardMedia
+                                  component="img"
+                                  height="140"
+                                  image={item.imagem}
+                                  alt={item.nome}
+                                  sx={{ objectFit: 'cover' }}
+                                />
+                              )}
+                              
+                              <CardContent sx={{ flexGrow: 1 }}>
+                                <Typography variant="h6" component="h3" gutterBottom>
+                                  {item.nome}
+                                </Typography>
+                                
+                                {item.descricao && (
+                                  <Typography variant="body2" color="text.secondary" gutterBottom>
+                                    {item.descricao}
+                                  </Typography>
+                                )}
+                                
+                                <Typography variant="h6" color="primary" sx={{ mt: 1 }}>
+                                  R$ {item.preco.toFixed(2).replace('.', ',')}
+                                </Typography>
+                              </CardContent>
+                              
+                              <CardActions>
+                                {!item.disponivel ? (
+                                  <Typography variant="body2" color="error" sx={{ ml: 1 }}>
+                                    Indisponível
+                                  </Typography>
+                                ) : (
+                                  <Button
+                                    color="primary"
+                                    startIcon={<AddIcon />}
+                                    onClick={() => handleAddItemToCart(item)}
+                                    fullWidth
+                                    variant="contained"
+                                  >
+                                    Adicionar
+                                  </Button>
+                                )}
+                              </CardActions>
+                            </Card>
+                          </Box>
+                        ))}
+                      </Box>
+                    </Box>
+                  );
+                })}
+              </Box>
+            )}
+          </Box>
+        )}
+      </DialogContent>
+      
+      {/* Carrinho */}
+      {carrinho.length > 0 && (
+        <>
+          <Divider />
+          <Box sx={{ p: 2 }}>
+            <Typography variant="h6" gutterBottom>Itens Selecionados</Typography>
+            
+            <List>
+              {carrinho.map(item => (
+                <ListItem key={item.item._id} alignItems="flex-start">
+                  <ListItemAvatar>
+                    <Avatar sx={{ bgcolor: theme.palette.primary.main }}>
+                      <RestaurantIcon />
+                    </Avatar>
+                  </ListItemAvatar>
+                  
+                  <Box sx={{ flexGrow: 1, mr: 2 }}>
+                    <Typography variant="subtitle1">{item.item.nome}</Typography>
+                    <Typography variant="body2" color="textSecondary">
+                      R$ {(item.preco * item.quantidade).toFixed(2).replace('.', ',')}
+                    </Typography>
+                    
+                    <TextField
+                      fullWidth
+                      size="small"
+                      margin="dense"
+                      label="Observação"
+                      value={observacoes[item.item._id] || ''}
+                      onChange={(e) => handleUpdateObservacao(item.item._id, e.target.value)}
+                      placeholder="Ex: Sem cebola, bem passado, etc."
+                    />
+                  </Box>
+                  
+                  <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                    <IconButton
+                      size="small"
+                      onClick={() => handleUpdateItemQuantity(item.item._id, item.quantidade - 1)}
+                    >
+                      <Remove />
+                    </IconButton>
+                    
+                    <Typography sx={{ mx: 1 }}>{item.quantidade}</Typography>
+                    
+                    <IconButton
+                      size="small"
+                      onClick={() => handleUpdateItemQuantity(item.item._id, item.quantidade + 1)}
+                    >
+                      <Add />
+                    </IconButton>
+                    
+                    <IconButton
+                      size="small"
+                      color="error"
+                      onClick={() => handleRemoveItemFromCart(item.item._id)}
+                    >
+                      <DeleteIcon />
+                    </IconButton>
+                  </Box>
+                </ListItem>
+              ))}
+            </List>
+            
+            <Box sx={{ display: 'flex', justifyContent: 'space-between', mt: 2 }}>
+              <Typography variant="h6">
+                Total: R$ {carrinho.reduce((sum, item) => sum + (item.preco * item.quantidade), 0).toFixed(2).replace('.', ',')}
+              </Typography>
+              
+              <Button
+                variant="contained"
+                color="primary"
+                startIcon={<CheckCircleIcon />}
+                onClick={handleFinalizarPedido}
+              >
+                Finalizar Pedido
+              </Button>
+            </Box>
+          </Box>
+        </>
+      )}
+    </Dialog>
+  );
+
+  return (
+    <Box sx={{ p: 2, pb: 7 }}>
+      {/* Dialog do Cardápio */}
+      {renderMenuDialog()}
+      
+      {/* Header */}
+      <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
+        <IconButton 
+          edge="start" 
+          sx={{ mr: 1 }}
+          onClick={() => navigate('/tables')}
+        >
+          <ArrowBackIcon />
+        </IconButton>
+        
+        <Typography variant="h6" component="h1">
+          Mesa {mesa?.numero}
+        </Typography>
+        
+        <Chip 
+          label={getStatusText(mesa?.status)}
+          size="small"
+          sx={{ 
+            ml: 1,
+            bgcolor: mesaStatusColors[mesa?.status],
+            color: 'white',
+            fontWeight: 'medium'
+          }}
+        />
+      </Box>
+      
+      {/* Informações rápidas */}
+      <Paper sx={{ p: 2, mb: 2 }}>
+        <Box sx={{ display: 'flex', flexDirection: 'row', gap: 2 }}>
+          <Box sx={{ flex: 1, textAlign: 'center' }}>
+            <PeopleIcon color="primary" />
+            <Typography variant="body2" color="text.secondary">
+              Clientes
+            </Typography>
+            <Typography variant="h6" fontWeight="medium">
+              {mesa?.ocupacaoAtual?.clientes || 0}
+            </Typography>
+          </Box>
+          
+          <Box sx={{ flex: 1, textAlign: 'center' }}>
+            <ReceiptIcon color="primary" />
+            <Typography variant="body2" color="text.secondary">
+              Pedidos
+            </Typography>
+            <Typography variant="h6" fontWeight="medium">
+              {pedidos.filter(p => p.status !== 'cancelado').length || 0}
+            </Typography>
+          </Box>
+          
+          <Box sx={{ flex: 1, textAlign: 'center' }}>
+            <MoneyIcon color="primary" />
+            <Typography variant="body2" color="text.secondary">
+              Total
+            </Typography>
+            <Typography variant="h6" fontWeight="medium">
+              R$ {calcularTotalGeral().toFixed(2)}
+            </Typography>
+          </Box>
+        </Box>
+      </Paper>
+      
+      {/* Tabs de navegação */}
+      <Paper sx={{ position: 'sticky', top: 56, zIndex: 1, bgcolor: 'background.paper' }}>
+        <Tabs 
+          value={activeTab} 
+          onChange={(e, newValue) => setActiveTab(newValue)}
+          variant="fullWidth"
+          indicatorColor="primary"
+          textColor="primary"
+        >
+          <Tab label="Detalhes" icon={<TableIcon />} iconPosition="start" />
+          <Tab 
+            label="Pedidos" 
+            iconPosition="start"
+            icon={
+              <Badge badgeContent={pedidos.length} color="primary" max={99}>
+                <RestaurantIcon />
+              </Badge>
+            }
+          />
+          <Tab label="Ações" icon={<EditIcon />} iconPosition="start" />
+        </Tabs>
+      </Paper>
+      
+      {/* Conteúdo baseado na tab ativa */}
+      {activeTab === 0 && renderDetalhesTab()}
+      {activeTab === 1 && renderPedidosTab()}
+      {activeTab === 2 && renderAcoesTab()}
+      
+      {/* Botão flutuante para novo pedido */}
+      {activeTab === 1 && (
+        <Fab
+          color="primary"
+          aria-label="Novo Pedido"
+          sx={{ position: 'fixed', bottom: 80, right: 16 }}
+          onClick={handleNovoPedido}
+        >
+          <AddIcon />
+        </Fab>
+      )}
+      
+      {/* Diálogo para adicionar clientes */}
+      <Dialog
+        open={openAdicionarClientes}
+        onClose={() => setOpenAdicionarClientes(false)}
+        maxWidth="xs"
+        fullWidth
+      >
+        <DialogTitle>
+          Adicionar Clientes à Mesa {mesa?.numero}
+        </DialogTitle>
+        
+        <DialogContent dividers>
+          <Typography variant="body2" paragraph>
+            Informe o número de clientes adicionais
+          </Typography>
+          
+          <TextField
+            label="Número de Clientes"
+            type="number"
+            fullWidth
+            value={numClientesForm}
+            onChange={(e) => setNumClientesForm(e.target.value)}
+            margin="normal"
+            required
+            InputProps={{ 
+              inputProps: { min: 1, max: (mesa?.capacidade || 10) - (mesa?.ocupacaoAtual?.clientes || 0) } 
+            }}
+            helperText={`Máximo: ${(mesa?.capacidade || 10) - (mesa?.ocupacaoAtual?.clientes || 0)} pessoas adicionais`}
+          />
+        </DialogContent>
+        
+        <DialogActions>
+          <Button onClick={() => setOpenAdicionarClientes(false)}>
+            Cancelar
+          </Button>
+          <Button 
+            variant="contained" 
+            onClick={handleAdicionarClientes}
+            startIcon={<PersonAddIcon />}
+          >
+            Adicionar
+          </Button>
+        </DialogActions>
+      </Dialog>
+      
+      {/* Snackbar para mensagens */}
+      <Snackbar
+        open={snackbar.open}
+        autoHideDuration={4000}
+        onClose={handleCloseSnackbar}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+      >
+        <Alert
+          onClose={handleCloseSnackbar}
+          severity={snackbar.severity}
+          variant="filled"
+          sx={{ width: '100%' }}
+        >
+          {snackbar.message}
+        </Alert>
+      </Snackbar>
+    </Box>
+  );
+};
+
+export default TableDetail;
