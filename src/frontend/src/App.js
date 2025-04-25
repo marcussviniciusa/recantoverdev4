@@ -26,6 +26,7 @@ import SuperAdminMenu from './pages/superadmin/Menu';
 import TableManagement from './pages/superadmin/TableManagement';
 import OrderManagement from './pages/superadmin/OrderManagement';
 import Reports from './pages/superadmin/Reports';
+import AdminPaymentHistory from './pages/superadmin/PaymentHistory';
 
 // Páginas do Usuário (Garçom)
 import Tables from './pages/user/Tables';
@@ -135,6 +136,7 @@ function App() {
                   <Route path="/admin/tables" element={<TableManagement />} />
                   <Route path="/admin/orders" element={<OrderManagement />} />
                   <Route path="/admin/reports" element={<Reports />} />
+                  <Route path="/admin/payment-history" element={<AdminPaymentHistory />} />
                 </Route>
               </Route>
 

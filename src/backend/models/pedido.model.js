@@ -203,6 +203,17 @@ pedidoSchema.pre('save', function(next) {
   next();
 });
 
+// Middleware pre-save para garantir que o pedido tenha um garçom
+pedidoSchema.pre('save', function(next) {
+  // Se o pedido for novo e não tiver garçom definido, usar o usuário de pagamento se disponível
+  if (this.isNew && !this.garcom && this.usuarioPagamento) {
+    console.log(`[PRE-SAVE] Definindo usuário de pagamento ${this.usuarioPagamento} como garçom para o pedido ${this._id}`);
+    this.garcom = this.usuarioPagamento;
+  }
+  
+  next();
+});
+
 // Método para adicionar item ao pedido
 pedidoSchema.methods.adicionarItem = function(item) {
   this.itens.push(item);
@@ -243,6 +254,12 @@ pedidoSchema.methods.registrarPagamento = function(metodoPagamento, usuarioId) {
   // Registrar usuário que finalizou o pagamento
   if (usuarioId) {
     this.usuarioPagamento = usuarioId;
+    
+    // Se o garçom não estiver definido, usar o usuário que registrou o pagamento
+    if (!this.garcom) {
+      this.garcom = usuarioId;
+      console.log(`[INFO] Definindo usuário ${usuarioId} como garçom para o pedido ${this._id} durante o pagamento`);
+    }
   }
   
   // Adicionar ao histórico de status

@@ -28,7 +28,8 @@ import {
   BarChart as BarChartIcon,
   Notifications as NotificationsIcon,
   AccountCircle,
-  Logout as LogoutIcon
+  Logout as LogoutIcon,
+  Receipt as ReceiptIcon
 } from '@mui/icons-material';
 import { useAuth } from '../contexts/AuthContext';
 import { useSocket } from '../contexts/SocketContext';
@@ -69,6 +70,7 @@ const SuperAdminLayout = () => {
     { text: 'Gestão de Mesas', icon: <TableBarIcon />, path: '/admin/tables' },
     { text: 'Cardápio', icon: <RestaurantIcon />, path: '/admin/menu' },
     { text: 'Usuários', icon: <PeopleIcon />, path: '/admin/users' },
+    { text: 'Histórico de Pagamentos', icon: <ReceiptIcon />, path: '/admin/payment-history' },
     { text: 'Relatórios', icon: <BarChartIcon />, path: '/admin/reports' },
   ];
 

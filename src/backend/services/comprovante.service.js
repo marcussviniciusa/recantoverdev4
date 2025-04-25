@@ -73,7 +73,7 @@ class ComprovanteService {
         
         // Dados do estabelecimento
         doc.fontSize(10).text('CNPJ: 00.000.000/0001-00');
-        doc.text('Endereço: Rua do Restaurante, 123 - Bairro - Cidade/UF');
+        doc.text('Endereço: Boqueirão - Parelhas-RN');
         doc.text('Telefone: (00) 0000-0000');
         doc.moveDown();
         
@@ -101,7 +101,7 @@ class ComprovanteService {
         }
         
         doc.text(`Data: ${dataFormatada}`);
-        doc.text(`Atendente: ${pedido.atendente?.nome || 'Não informado'}`);
+        doc.text(`Atendente: ${pedido.usuarioPagamento?.nome || pedido.garcom?.nome || 'Não informado'}`);
         doc.text(`Mesa: ${pedido.mesa?.numero || 'Não informado'}`);
         
         // Dados do cliente (se fornecidos)

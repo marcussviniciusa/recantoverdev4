@@ -11,25 +11,20 @@ import {
   TableHead,
   TableRow,
   TablePagination,
-  Chip,
-  CircularProgress,
   IconButton,
-  Card,
-  CardContent,
-  Grid,
-  Divider,
-  TextField,
-  InputAdornment,
+  Chip,
   Dialog,
   DialogTitle,
   DialogContent,
   DialogContentText,
   DialogActions,
   Button,
-  Tooltip,
-  Avatar,
   Snackbar,
-  Alert
+  Alert,
+  CircularProgress,
+  TextField,
+  InputAdornment,
+  Tooltip,
 } from '@mui/material';
 import {
   MonetizationOn as PaymentIcon,
@@ -47,18 +42,18 @@ import {
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import api from '../../services/api';
-import { useAuth } from '../../contexts/AuthContext';
 
-const PaymentHistory = () => {
+function PaymentHistory() {
   const navigate = useNavigate();
-  const { currentUser } = useAuth();
+  
+  // Estado para armazenar o histórico de pagamentos
   const [payments, setPayments] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [totalPayments, setTotalPayments] = useState(0);
+  const [searchQuery, setSearchQuery] = useState('');
+  
+  // Estado para paginação
   const [page, setPage] = useState(0);
   const [rowsPerPage, setRowsPerPage] = useState(10);
-  const [searchTerm, setSearchTerm] = useState('');
-  const [filteredPayments, setFilteredPayments] = useState([]);
   
   // Estado para diálogo de confirmação de exclusão
   const [deleteDialog, setDeleteDialog] = useState({
@@ -79,47 +74,19 @@ const PaymentHistory = () => {
   useEffect(() => {
     fetchPaymentHistory();
   }, []);
-
-  // Filtrar pagamentos com base no termo de busca
-  useEffect(() => {
-    if (payments.length > 0) {
-      if (!searchTerm) {
-        setFilteredPayments(payments);
-        setTotalPayments(payments.length);
-      } else {
-        const lowercaseSearch = searchTerm.toLowerCase();
-        const filtered = payments.filter(payment => 
-          payment.mesa?.numero?.toString().includes(lowercaseSearch) ||
-          payment.garcom?.nome?.toLowerCase().includes(lowercaseSearch) ||
-          payment.valorTotal?.toString().includes(lowercaseSearch) ||
-          format(new Date(payment.dataCriacao), 'dd/MM/yyyy HH:mm').includes(lowercaseSearch)
-        );
-        setFilteredPayments(filtered);
-        setTotalPayments(filtered.length);
-      }
-    }
-  }, [searchTerm, payments]);
-
+  
+  // Função para buscar os dados do histórico de pagamentos
   const fetchPaymentHistory = async () => {
+    setLoading(true);
     try {
-      setLoading(true);
-      // Buscar todos os pedidos pagos com população dos dados do usuário que finalizou o pagamento
-      // e filtrar apenas os registros que não foram excluídos da lista
-      // também agrupa pagamentos por mesa para evitar múltiplos registros da mesma mesa
+      // Usar a mesma rota de API que a página de usuário usa
       const response = await api.get('/api/pedidos?status=pago&populate=usuarioPagamento,garcom,mesa&excluidoDaLista=false&agruparPorMesa=true');
       
       if (response.data.success) {
         const paymentsData = response.data.data.filter(payment => !payment.excluidoDaLista);
-        console.log('Dados de pagamentos agrupados por mesa:', paymentsData);
-        
-        // Log para verificar se os dados do garçom estão vindo corretamente
-        paymentsData.forEach(payment => {
-          console.log(`Pedido ${payment._id} - Garçom:`, payment.garcom);
-        });
-        
         setPayments(paymentsData);
-        setFilteredPayments(paymentsData);
-        setTotalPayments(paymentsData.length);
+      } else {
+        throw new Error(response.data.message || 'Erro ao carregar histórico de pagamentos');
       }
     } catch (error) {
       console.error('Erro ao buscar histórico de pagamentos:', error);
@@ -129,7 +96,89 @@ const PaymentHistory = () => {
     }
   };
   
-  // Função para abrir diálogo de confirmação de exclusão
+  // Funções para paginação
+  const handleChangePage = (event, newPage) => {
+    setPage(newPage);
+  };
+  
+  const handleChangeRowsPerPage = (event) => {
+    setRowsPerPage(parseInt(event.target.value, 10));
+    setPage(0);
+  };
+  
+  // Função para formatar a data
+  const formatDate = (dateString) => {
+    if (!dateString) return 'N/D';
+    try {
+      const date = new Date(dateString);
+      return format(date, "dd/MM/yyyy 'às' HH:mm", { locale: ptBR });
+    } catch (error) {
+      return 'Data inválida';
+    }
+  };
+  
+  // Função para formatar o valor monetário
+  const formatCurrency = (value) => {
+    if (value === undefined || value === null) return 'R$ 0,00';
+    return `R$ ${Number(value).toFixed(2)}`;
+  };
+  
+  // Função para renderizar o nome do garçom de forma mais robusta
+  const renderGarcomName = (payment) => {
+    // Lógica revisada para mostrar informações de responsabilidade
+    if (payment && payment.garcom && payment.garcom.nome) {
+      return payment.garcom.nome;
+    } else if (payment && payment.usuarioPagamento && payment.usuarioPagamento.nome) {
+      // Se não houver garçom, mas houver usuário de pagamento, usa este
+      return `${payment.usuarioPagamento.nome} (Pagamento)`;
+    } else if (payment && payment.dataCriacao) {
+      // Se mesmo assim não houver informações, mostra pelo menos quando foi feito
+      return `Atendente (${formatDate(payment.dataCriacao).split(' às')[0]})`;
+    } else {
+      return 'Não informado';
+    }
+  };
+  
+  // Filtragem dos pagamentos com base na pesquisa
+  const filteredPayments = payments.filter(payment => {
+    const searchLower = searchQuery.toLowerCase();
+    
+    // Verificar se o ID da mesa (se existir) corresponde à pesquisa
+    const mesaMatch = payment.mesa && payment.mesa.numero && 
+      payment.mesa.numero.toString().includes(searchLower);
+    
+    // Verificar se o nome do garçom (se existir) corresponde à pesquisa
+    const garcomMatch = payment.garcom && payment.garcom.nome && 
+      payment.garcom.nome.toLowerCase().includes(searchLower);
+    
+    // Verificar se o método de pagamento (se existir) corresponde à pesquisa
+    const metodoMatch = payment.metodoPagamento && 
+      payment.metodoPagamento.toLowerCase().includes(searchLower);
+    
+    // Verificar se a data (se existir) corresponde à pesquisa
+    const dataMatch = payment.dataPagamento && 
+      formatDate(payment.dataPagamento).toLowerCase().includes(searchLower);
+    
+    // Verificar se o ID do pagamento corresponde à pesquisa
+    const idMatch = payment._id && payment._id.toLowerCase().includes(searchLower);
+    
+    return mesaMatch || garcomMatch || metodoMatch || dataMatch || idMatch;
+  });
+  
+  // Ordenar pagamentos do mais recente para o mais antigo
+  const sortedPayments = [...filteredPayments].sort((a, b) => {
+    const dateA = a.dataPagamento ? new Date(a.dataPagamento) : new Date(0);
+    const dateB = b.dataPagamento ? new Date(b.dataPagamento) : new Date(0);
+    return dateB - dateA;
+  });
+  
+  // Paginar os resultados
+  const paginatedPayments = sortedPayments.slice(
+    page * rowsPerPage,
+    page * rowsPerPage + rowsPerPage
+  );
+  
+  // Função para abrir diálogo de exclusão
   const handleDeleteClick = (paymentId) => {
     setDeleteDialog({
       open: true,
@@ -138,7 +187,7 @@ const PaymentHistory = () => {
     });
   };
   
-  // Função para fechar diálogo de confirmação
+  // Função para fechar diálogo de exclusão
   const handleDeleteDialogClose = () => {
     setDeleteDialog({
       ...deleteDialog,
@@ -146,37 +195,35 @@ const PaymentHistory = () => {
     });
   };
   
-  // Função para excluir registro da lista (sem afetar o estado da mesa)
-  const handleCancelPayment = async () => {
+  // Função para confirmar exclusão
+  const handleConfirmDelete = async () => {
     try {
       setDeleteDialog(prev => ({
         ...prev,
         loading: true
       }));
       
-      // Chama a API para excluir o registro da lista (sem afetar o estado da mesa)
+      // Corrigido o endpoint para usar o mesmo que o componente do usuário
       const response = await api.delete(`/api/pedidos/${deleteDialog.paymentId}/excluir-registro`);
       
-      // Recarrega a lista de pagamentos
-      fetchPaymentHistory();
+      if (response.data.success) {
+        showSnackbar('Registro removido com sucesso', 'success');
+        fetchPaymentHistory(); // Recarregar dados
+      } else {
+        throw new Error(response.data.message || 'Erro ao remover registro');
+      }
       
-      // Fecha o diálogo
       setDeleteDialog({
         open: false,
         paymentId: null,
-        reason: '',
         loading: false
       });
-      
-      // Exibe mensagem de sucesso
-      showSnackbar('Registro excluído da lista com sucesso', 'success');
     } catch (error) {
       console.error('Erro ao excluir registro:', error);
       showSnackbar(
-        error.response?.data?.message || error.message || 'Erro ao excluir registro da lista',
+        error.response?.data?.message || error.message || 'Erro ao excluir registro',
         'error'
       );
-    } finally {
       setDeleteDialog(prev => ({
         ...prev,
         loading: false
@@ -278,207 +325,90 @@ const PaymentHistory = () => {
     });
   };
   
-  // Fechar snackbar
-  const handleCloseSnackbar = () => {
+  const handleSnackbarClose = () => {
     setSnackbar({
       ...snackbar,
       open: false
     });
   };
-
-  const handleChangePage = (event, newPage) => {
-    setPage(newPage);
-  };
-
-  const handleChangeRowsPerPage = (event) => {
-    setRowsPerPage(parseInt(event.target.value, 10));
-    setPage(0);
-  };
-
-  const formatDate = (dateString) => {
-    try {
-      const date = new Date(dateString);
-      return format(date, "dd/MM/yyyy 'às' HH:mm", { locale: ptBR });
-    } catch (error) {
-      return dateString || 'Data indisponível';
-    }
-  };
-
-  const formatCurrency = (value) => {
-    return new Intl.NumberFormat('pt-BR', {
-      style: 'currency',
-      currency: 'BRL'
-    }).format(value || 0);
-  };
-
-  const renderGarcomName = (payment) => {
-    // Lógica revisada para mostrar informações de responsabilidade
-    if (payment && payment.garcom && payment.garcom.nome) {
-      return payment.garcom.nome;
-    } else if (payment && payment.usuarioPagamento && payment.usuarioPagamento.nome) {
-      // Se não houver garçom, mas houver usuário de pagamento, usa este
-      return `${payment.usuarioPagamento.nome} (Pagamento)`;
-    } else if (payment && payment.dataCriacao) {
-      // Se mesmo assim não houver informações, mostra pelo menos quando foi feito
-      return `Atendente (${formatDate(payment.dataCriacao).split(' às')[0]})`;
-    } else {
-      return 'Não informado';
-    }
-  };
-
-  if (loading) {
-    return (
-      <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: 'calc(100vh - 120px)' }}>
-        <CircularProgress />
-      </Box>
-    );
-  }
-
+  
   return (
-    <Box sx={{ p: 2 }}>
-      <Typography variant="h5" gutterBottom component="h1" sx={{ mb: 3 }}>
-        Histórico de Pagamentos
-      </Typography>
-
-      {/* Estatísticas e filtros */}
-      <Grid container spacing={2} sx={{ mb: 3 }}>
-        <Grid item xs={12} md={4}>
-          <Card>
-            <CardContent>
-              <Box sx={{ display: 'flex', alignItems: 'center' }}>
-                <PaymentIcon color="primary" sx={{ fontSize: 40, mr: 2 }} />
-                <Box>
-                  <Typography variant="body2" color="text.secondary">
-                    Total de Pagamentos
-                  </Typography>
-                  <Typography variant="h5" fontWeight="bold">
-                    {totalPayments}
-                  </Typography>
-                </Box>
-              </Box>
-            </CardContent>
-          </Card>
-        </Grid>
-
-        <Grid item xs={12} md={8}>
-          <Card>
-            <CardContent>
-              <TextField
-                fullWidth
-                variant="outlined"
-                placeholder="Buscar por mesa, garçom ou data..."
-                size="small"
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                InputProps={{
-                  startAdornment: (
-                    <InputAdornment position="start">
-                      <SearchIcon color="action" />
-                    </InputAdornment>
-                  ),
-                }}
-              />
-            </CardContent>
-          </Card>
-        </Grid>
-      </Grid>
-
-      {/* Tabela de pagamentos */}
-      <Paper sx={{ width: '100%', overflow: 'hidden' }}>
-        <TableContainer sx={{ maxHeight: 'calc(100vh - 300px)' }}>
-          <Table stickyHeader>
-            <TableHead>
-              <TableRow>
-                <TableCell>ID do Pedido</TableCell>
-                <TableCell>
-                  <Box sx={{ display: 'flex', alignItems: 'center' }}>
-                    <TableIcon sx={{ mr: 1, fontSize: 18 }} />
-                    Mesa
-                  </Box>
-                </TableCell>
-                <TableCell>
-                  <Box sx={{ display: 'flex', alignItems: 'center' }}>
-                    <PersonIcon sx={{ mr: 1, fontSize: 18 }} />
-                    Garçom
-                  </Box>
-                </TableCell>
-                <TableCell>
-                  <Box sx={{ display: 'flex', alignItems: 'center' }}>
-                    <PersonIcon sx={{ mr: 1, fontSize: 18 }} />
-                    Finalizado por
-                  </Box>
-                </TableCell>
-                <TableCell>
-                  <Box sx={{ display: 'flex', alignItems: 'center' }}>
-                    <EventIcon sx={{ mr: 1, fontSize: 18 }} />
-                    Data
-                  </Box>
-                </TableCell>
-                <TableCell>
-                  <Box sx={{ display: 'flex', alignItems: 'center' }}>
-                    <PaymentIcon sx={{ mr: 1, fontSize: 18 }} />
-                    Valor
-                  </Box>
-                </TableCell>
-                <TableCell>Método</TableCell>
-                <TableCell align="center">Ações</TableCell>
-              </TableRow>
-            </TableHead>
-            <TableBody>
-              {filteredPayments
-                .slice(page * rowsPerPage, page * rowsPerPage + rowsPerPage)
-                .map((payment) => (
+    <Box sx={{ p: 3 }}>
+      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
+        <Typography variant="h5" component="h1" gutterBottom>
+          Histórico de Pagamentos
+        </Typography>
+        
+        <TextField
+          placeholder="Pesquisar..."
+          variant="outlined"
+          size="small"
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          sx={{ width: '250px' }}
+          InputProps={{
+            startAdornment: (
+              <InputAdornment position="start">
+                <SearchIcon />
+              </InputAdornment>
+            ),
+          }}
+        />
+      </Box>
+      
+      <Paper sx={{ width: '100%', overflow: 'hidden', mb: 3 }}>
+        {loading ? (
+          <Box sx={{ display: 'flex', justifyContent: 'center', p: 3 }}>
+            <CircularProgress />
+          </Box>
+        ) : paginatedPayments.length === 0 ? (
+          <Box sx={{ p: 3, textAlign: 'center' }}>
+            <Typography variant="body1" color="text.secondary">
+              {searchQuery ? 'Nenhum resultado encontrado para a pesquisa.' : 'Nenhum pagamento registrado.'}
+            </Typography>
+          </Box>
+        ) : (
+          <TableContainer sx={{ maxHeight: 440 }}>
+            <Table stickyHeader aria-label="tabela de histórico de pagamentos">
+              <TableHead>
+                <TableRow>
+                  <TableCell>Data/Hora</TableCell>
+                  <TableCell>Mesa</TableCell>
+                  <TableCell>Garçom</TableCell>
+                  <TableCell>Valor Total</TableCell>
+                  <TableCell>Método</TableCell>
+                  <TableCell align="center">Ações</TableCell>
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {paginatedPayments.map((payment) => (
                   <TableRow key={payment._id} hover>
-                    <TableCell>{payment._id.substring(payment._id.length - 6)}</TableCell>
                     <TableCell>
                       <Box sx={{ display: 'flex', alignItems: 'center' }}>
-                        <Chip
-                          size="small"
-                          label={`Mesa ${payment.mesa?.numero || 'N/D'}`}
-                          color="primary"
-                          variant="outlined"
-                        />
+                        <EventIcon fontSize="small" sx={{ mr: 1, color: 'text.secondary' }} />
+                        {formatDate(payment.dataPagamento)}
                       </Box>
                     </TableCell>
                     <TableCell>
                       <Box sx={{ display: 'flex', alignItems: 'center' }}>
-                        <Tooltip title="Garçom que atendeu a mesa">
-                          <Avatar 
-                            sx={{ width: 24, height: 24, mr: 1, bgcolor: 'primary.main' }}
-                          >
-                            <RestaurantIcon sx={{ fontSize: 14 }} />
-                          </Avatar>
-                        </Tooltip>
-                        <Typography variant="body2" fontWeight="medium" color="primary.main">
-                          {renderGarcomName(payment)}
-                        </Typography>
+                        <TableIcon fontSize="small" sx={{ mr: 1, color: 'primary.main' }} />
+                        {payment.mesa ? `Mesa ${payment.mesa.numero}` : 'N/D'}
                       </Box>
                     </TableCell>
                     <TableCell>
                       <Box sx={{ display: 'flex', alignItems: 'center' }}>
-                        <Tooltip title="Usuário que finalizou o pagamento">
-                          <Avatar 
-                            sx={{ width: 24, height: 24, mr: 1, bgcolor: 'secondary.main' }}
-                          >
-                            <BadgeIcon sx={{ fontSize: 14 }} />
-                          </Avatar>
-                        </Tooltip>
-                        <Typography variant="body2">
-                          {payment.usuarioPagamento?.nome || currentUser?.nome || 'N/D'}
-                        </Typography>
+                        <BadgeIcon fontSize="small" sx={{ mr: 1, color: 'secondary.main' }} />
+                        {renderGarcomName(payment)}
                       </Box>
                     </TableCell>
-                    <TableCell>{formatDate(payment.dataPagamento || payment.dataCriacao)}</TableCell>
                     <TableCell>
-                      {payment.taxaServico > 0 ? (
-                        <Tooltip title={`Inclui ${formatCurrency(payment.taxaServico)} de taxa de serviço`}>
-                          <Box>
-                            {formatCurrency(payment.valorFinal || (payment.valorTotal + payment.taxaServico))}
-                          </Box>
-                        </Tooltip>
-                      ) : (
-                        formatCurrency(payment.valorTotal)
-                      )}
+                      <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                        <PaymentIcon fontSize="small" sx={{ mr: 1, color: 'success.main' }} />
+                        {payment.incluirTaxaServico ? 
+                          formatCurrency(payment.valorTotal + (payment.taxaServico || 0)) : 
+                          formatCurrency(payment.valorTotal)
+                        }
+                      </Box>
                     </TableCell>
                     <TableCell>
                       <Chip
@@ -518,27 +448,15 @@ const PaymentHistory = () => {
                     </TableCell>
                   </TableRow>
                 ))}
-              
-              {filteredPayments.length === 0 && (
-                <TableRow>
-                  <TableCell colSpan={8} align="center" sx={{ py: 3 }}>
-                    <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-                      <ReceiptIcon sx={{ fontSize: 40, color: 'text.disabled', mb: 1 }} />
-                      <Typography variant="body1" color="text.secondary">
-                        Nenhum pagamento encontrado
-                      </Typography>
-                    </Box>
-                  </TableCell>
-                </TableRow>
-              )}
-            </TableBody>
-          </Table>
-        </TableContainer>
+              </TableBody>
+            </Table>
+          </TableContainer>
+        )}
         
         <TablePagination
           rowsPerPageOptions={[5, 10, 25, 50]}
           component="div"
-          count={totalPayments}
+          count={filteredPayments.length}
           rowsPerPage={rowsPerPage}
           page={page}
           onPageChange={handleChangePage}
@@ -556,23 +474,29 @@ const PaymentHistory = () => {
         fullWidth
       >
         <DialogTitle>Excluir registro da lista</DialogTitle>
+        
         <DialogContent>
           <DialogContentText>
             Tem certeza que deseja excluir este registro da lista de histórico? Esta ação não altera o status da mesa ou do pagamento, apenas esconde o registro desta visualização.
           </DialogContentText>
         </DialogContent>
+        
         <DialogActions>
-          <Button onClick={handleDeleteDialogClose} color="primary">
-            Não
+          <Button 
+            onClick={handleDeleteDialogClose}
+            startIcon={<CancelIcon />}
+            disabled={deleteDialog.loading}
+          >
+            Cancelar
           </Button>
           <Button 
-            onClick={handleCancelPayment} 
-            color="error" 
+            onClick={handleConfirmDelete}
+            color="error"
             variant="contained"
+            startIcon={deleteDialog.loading ? <CircularProgress size={24} /> : <DeleteIcon />}
             disabled={deleteDialog.loading}
-            startIcon={deleteDialog.loading ? <CircularProgress size={20} /> : <DeleteIcon />}
           >
-            {deleteDialog.loading ? 'Excluindo...' : 'Sim, excluir'}
+            {deleteDialog.loading ? 'Excluindo...' : 'Excluir'}
           </Button>
         </DialogActions>
       </Dialog>
@@ -636,16 +560,16 @@ const PaymentHistory = () => {
       {/* Snackbar para mensagens */}
       <Snackbar
         open={snackbar.open}
-        autoHideDuration={4000}
-        onClose={handleCloseSnackbar}
-        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+        autoHideDuration={5000}
+        onClose={handleSnackbarClose}
+        anchorOrigin={{ vertical: 'top', horizontal: 'right' }}
       >
-        <Alert onClose={handleCloseSnackbar} severity={snackbar.severity} sx={{ width: '100%' }}>
+        <Alert onClose={handleSnackbarClose} severity={snackbar.severity}>
           {snackbar.message}
         </Alert>
       </Snackbar>
     </Box>
   );
-};
+}
 
 export default PaymentHistory;

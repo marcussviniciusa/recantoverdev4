@@ -54,8 +54,23 @@ exports.getAllPedidos = async (req, res) => {
       query = query.populate('usuarioPagamento', 'nome email');
     }
     
+    // Adicionar log para depuração
+    console.log('[DEBUG] Buscando pedidos com filtro:', JSON.stringify(filtro));
+    console.log('[DEBUG] Populate adicional:', populate);
+    
     // Executar a consulta
     const pedidos = await query.exec();
+    
+    // Log para debug - exibe os pedidos completos para verificar o campo garcom
+    console.log('[DEBUG] Exemplo de pedido (primeiro da lista):', 
+      pedidos.length > 0 ? 
+      JSON.stringify({
+        _id: pedidos[0]._id,
+        mesa: pedidos[0].mesa,
+        garcom: pedidos[0].garcom,
+        usuarioPagamento: pedidos[0].usuarioPagamento,
+        status: pedidos[0].status
+      }, null, 2) : 'Nenhum pedido encontrado');
     
     // Log para debug - mostra explicitamente os valores da taxa de serviço
     console.log('Pedidos com incluirTaxaServico:', pedidos.map(p => {
@@ -109,17 +124,29 @@ exports.getAllPedidos = async (req, res) => {
           new Date(b.dataPagamento || b.dataCriacao) - new Date(a.dataPagamento || a.dataCriacao)
         );
         
-        const pedidoBase = pedidosOrdenados[0];
+        const pedidoBase = { ...pedidosOrdenados[0].toObject() };
         const pedidosIds = grupoPedidos.map(p => p._id);
         
         // Calcular o valor total
         const valorTotal = grupoPedidos.reduce((total, p) => total + (p.valorTotal || 0), 0);
         
-        // Criar uma cópia do pedido base com as informações atualizadas
+        // Garantir que as referências populadas sejam mantidas
         pedidoBase.valorTotal = valorTotal;
         pedidoBase._pedidosAgrupados = pedidosIds;
         
+        // Garantir que o garçom seja preservado (isso é o que estava faltando antes)
+        if (pedidosOrdenados[0].garcom && typeof pedidosOrdenados[0].garcom === 'object') {
+          pedidoBase.garcom = pedidosOrdenados[0].garcom;
+        }
+        
+        // Garantir que o usuário de pagamento seja preservado
+        if (pedidosOrdenados[0].usuarioPagamento && typeof pedidosOrdenados[0].usuarioPagamento === 'object') {
+          pedidoBase.usuarioPagamento = pedidosOrdenados[0].usuarioPagamento;
+        }
+        
         console.log(`Grupo ${chave}: ${pedidosIds.length} pedidos, valor total R$ ${valorTotal.toFixed(2)}`);
+        console.log('Informações do garçom no pedido agrupado:', pedidoBase.garcom);
+        
         pedidosAgrupados.push(pedidoBase);
       });
       
@@ -232,13 +259,17 @@ exports.createPedido = async (req, res) => {
     // Criar o objeto do novo pedido
     const novoPedido = new Pedido({
       mesa: mesaId,
-      garcom: req.usuario ? req.usuario._id : null,
+      garcom: req.usuario?._id, // Simplificado para usar operador opcional
       itens: itensValidados,
       observacao: req.body.observacao || '',
       status: 'aberto',
       valorTotal: valorTotal,
       timestampOcupacao: mesa.ocupacaoAtual?.inicioAtendimento || new Date() // Guardar o timestamp da ocupação atual
     });
+    
+    // Log para verificar o usuário e o garçom
+    console.log('[DEBUG] Usuário autenticado:', req.usuario ? `ID: ${req.usuario._id}, Nome: ${req.usuario.nome}` : 'Não disponível');
+    console.log('[DEBUG] Garçom definido para o pedido:', novoPedido.garcom);
     
     // Se houver pagante especificado, adicionar o pedido a ele na mesa
     if (pagante && pagante.identificador) {
@@ -438,6 +469,7 @@ exports.registrarPagamento = async (req, res) => {
         
         // Registrar o pagamento no pedido
         const usuarioId = req.usuario?._id;
+        console.log(`[DEBUG] Registrando pagamento para pedido ${pedidoId} - Usuário:`, usuarioId);
         await outroPedido.registrarPagamento(metodoPagamento, usuarioId);
         
         resultados.push(outroPedido);
@@ -445,28 +477,31 @@ exports.registrarPagamento = async (req, res) => {
       
       // Registrar o usuário que está finalizando o pagamento para o pedido principal
       const usuarioId = req.usuario?._id;
+      console.log(`[DEBUG] Registrando pagamento para pedido principal ${req.params.id} - Usuário:`, usuarioId);
       await pedido.registrarPagamento(metodoPagamento, usuarioId);
-      
-      resultados.push(pedido);
-      
-      res.status(200).json({
-        success: true,
-        message: 'Pagamento registrado com sucesso para todos os pedidos',
-        pedidoId: req.params.id,
-        data: resultados
-      });
     } else {
-      // Registrar o usuário que está finalizando o pagamento
+      // Caso de pagamento individual (sem lista de múltiplos pedidos)
+      // Importante: garantir que o usuário que efetuou o pagamento seja registrado
       const usuarioId = req.usuario?._id;
+      console.log(`[DEBUG] Registrando pagamento individual para pedido ${req.params.id} - Usuário:`, usuarioId);
       await pedido.registrarPagamento(metodoPagamento, usuarioId);
-      
-      res.status(200).json({
-        success: true,
-        message: 'Pagamento registrado com sucesso',
-        pedidoId: req.params.id,
-        data: pedido
-      });
     }
+    
+    // Se pedido faz parte de uma mesa, verificar se a mesa precisa ser reaberta
+    if (pedido.mesa) {
+      const mesa = await Mesa.findById(pedido.mesa);
+      if (mesa && mesa.status === 'disponivel') {
+        mesa.status = 'ocupada';
+        await mesa.save();
+      }
+    }
+    
+    res.status(200).json({
+      success: true,
+      message: 'Pagamento registrado com sucesso',
+      pedidoId: req.params.id,
+      data: pedido
+    });
   } catch (error) {
     res.status(500).json({
       success: false,

@@ -22,7 +22,7 @@ exports.gerarComprovante = async (req, res) => {
       // Removido populate de itens.produto que não existe no schema
       .populate({ path: 'mesa', strictPopulate: false })
       .populate({ path: 'garcom', select: 'nome', strictPopulate: false })
-      .populate({ path: 'atendente', select: 'nome', strictPopulate: false })
+      .populate({ path: 'usuarioPagamento', select: 'nome', strictPopulate: false })
       .populate({ path: 'cliente', select: 'nome telefone email', strictPopulate: false });
     
     if (!pedido) {
@@ -75,7 +75,7 @@ exports.gerarComprovante = async (req, res) => {
       id: pedido._id,
       incluirTaxaServico: pedido.incluirTaxaServico,
       taxaServico: pedido.taxaServico,
-      valorTotal: pedido.total,
+      valorTotal: pedido.valorTotal,
       valorFinal: pedido.valorFinal
     });
     
@@ -83,7 +83,7 @@ exports.gerarComprovante = async (req, res) => {
       pedido,
       pagamento,
       cliente,
-      valorTotal: pedido.total || 0,
+      valorTotal: pedido.valorTotal || 0,
       metodoPagamento: pagamento?.metodo || (pagamento?.divisao && pagamento?.divisao.length > 0 ? 'dividido' : 'não especificado'),
       dataPagamento: pagamento?.data || pedido.dataAtualizacao || new Date()
     };
@@ -129,7 +129,7 @@ exports.enviarWhatsApp = async (req, res) => {
       // Removido populate de itens.produto que não existe no schema
       .populate({ path: 'mesa', strictPopulate: false })
       .populate({ path: 'garcom', select: 'nome', strictPopulate: false })
-      .populate({ path: 'atendente', select: 'nome', strictPopulate: false })
+      .populate({ path: 'usuarioPagamento', select: 'nome', strictPopulate: false })
       .populate({ path: 'cliente', select: 'nome telefone email', strictPopulate: false });
     
     if (!pedido) {
@@ -182,7 +182,7 @@ exports.enviarWhatsApp = async (req, res) => {
       id: pedido._id,
       incluirTaxaServico: pedido.incluirTaxaServico,
       taxaServico: pedido.taxaServico,
-      valorTotal: pedido.total,
+      valorTotal: pedido.valorTotal,
       valorFinal: pedido.valorFinal
     });
     
@@ -190,7 +190,7 @@ exports.enviarWhatsApp = async (req, res) => {
       pedido,
       pagamento,
       cliente,
-      valorTotal: pedido.total || 0,
+      valorTotal: pedido.valorTotal || 0,
       metodoPagamento: pagamento?.metodo || (pagamento?.divisao && pagamento?.divisao.length > 0 ? 'dividido' : 'não especificado'),
       dataPagamento: pagamento?.data || pedido.dataAtualizacao || new Date()
     };
@@ -245,7 +245,7 @@ exports.prepararImpressao = async (req, res) => {
       // Removido populate de itens.produto que não existe no schema
       .populate({ path: 'mesa', strictPopulate: false })
       .populate({ path: 'garcom', select: 'nome', strictPopulate: false })
-      .populate({ path: 'atendente', select: 'nome', strictPopulate: false })
+      .populate({ path: 'usuarioPagamento', select: 'nome', strictPopulate: false })
       .populate({ path: 'cliente', select: 'nome telefone email', strictPopulate: false });
     
     if (!pedido) {
@@ -298,7 +298,7 @@ exports.prepararImpressao = async (req, res) => {
       id: pedido._id,
       incluirTaxaServico: pedido.incluirTaxaServico,
       taxaServico: pedido.taxaServico,
-      valorTotal: pedido.total,
+      valorTotal: pedido.valorTotal,
       valorFinal: pedido.valorFinal
     });
     
@@ -306,7 +306,7 @@ exports.prepararImpressao = async (req, res) => {
       pedido,
       pagamento,
       cliente,
-      valorTotal: pedido.total || 0,
+      valorTotal: pedido.valorTotal || 0,
       metodoPagamento: pagamento?.metodo || (pagamento?.divisao && pagamento?.divisao.length > 0 ? 'dividido' : 'não especificado'),
       dataPagamento: pagamento?.data || pedido.dataAtualizacao || new Date()
     };
