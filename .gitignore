@@ -24,3 +24,7 @@ logs
 # Sistema operacional
 .DS_Store
 Thumbs.db
+
+
+
+src/backend/uploads/comprovantes/*.pdf

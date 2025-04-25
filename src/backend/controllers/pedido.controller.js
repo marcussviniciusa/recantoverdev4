@@ -57,47 +57,71 @@ exports.getAllPedidos = async (req, res) => {
     // Executar a consulta
     const pedidos = await query.exec();
     
+    // Log para debug - mostra explicitamente os valores da taxa de serviço
+    console.log('Pedidos com incluirTaxaServico:', pedidos.map(p => {
+      return {
+        id: p._id,
+        mesa: p.mesa?.numero,
+        incluirTaxaServico: p.incluirTaxaServico,
+        taxaServico: p.taxaServico,
+        valorTotal: p.valorTotal,
+        valorFinal: p.valorFinal
+      };
+    }));
+    
     // Se solicitado para agrupar por mesa (para histórico de pagamentos)
     if (agruparPorMesa && status === 'pago') {
-      // Agrupar pedidos por mesa e data (mesmo dia)
-      const pedidosAgrupados = [];
-      const mesasProcessadas = new Map(); // Map para rastrear mesas já processadas
+      console.log('Processando agrupamento de pagamentos por mesa...');
       
-      // Primeiro, vamos agrupar por mesa e data
+      // Criar um mapa para agrupar pedidos por mesa e ocupação
+      // A chave será combinação de mesaId + timestamp de ocupação
+      const pedidosPorOcupacaoMesa = new Map();
+      
+      // Agrupar pedidos por chave de ocupação
       for (const pedido of pedidos) {
-        // Pular pedidos sem mesa
-        if (!pedido.mesa) continue;
+        if (!pedido.mesa) continue; // Pular pedidos sem mesa
         
         const mesaId = pedido.mesa._id.toString();
-        const dataPagamento = pedido.dataPagamento;
-        const dataStr = dataPagamento ? new Date(dataPagamento).toISOString().split('T')[0] : 'sem-data';
-        const chave = `${mesaId}-${dataStr}`;
+        const timestampOcupacao = pedido.timestampOcupacao ? 
+          new Date(pedido.timestampOcupacao).getTime() : 
+          new Date(pedido.dataCriacao).getTime(); // Fallback para pedidos antigos
         
-        if (!mesasProcessadas.has(chave)) {
-          // Esta é a primeira ocorrência desta mesa nesta data
-          mesasProcessadas.set(chave, {
-            indice: pedidosAgrupados.length,
-            total: pedido.valorTotal || 0,
-            pedidosIds: [pedido._id],
-            pedido: pedido
-          });
-          
-          // Adicionar ao array de pedidos agrupados
-          pedidosAgrupados.push(pedido);
-        } else {
-          // Esta mesa já foi processada para esta data
-          const dadosMesa = mesasProcessadas.get(chave);
-          
-          // Atualizar valor total
-          dadosMesa.total += pedido.valorTotal || 0;
-          dadosMesa.pedidosIds.push(pedido._id);
-          
-          // Atualizar o pedido agrupado com o valor total
-          const pedidoAgrupado = pedidosAgrupados[dadosMesa.indice];
-          pedidoAgrupado.valorTotal = dadosMesa.total;
-          pedidoAgrupado._pedidosAgrupados = dadosMesa.pedidosIds;
+        // Definir a chave de agrupamento usando o ID da mesa + timestamp de ocupação
+        const chaveOcupacao = `${mesaId}-${timestampOcupacao}`;
+        
+        console.log(`Pedido ${pedido._id} (${pedido.dataCriacao}) para mesa ${mesaId}, timestamp ocupação: ${new Date(timestampOcupacao).toISOString()}`);
+        
+        // Adicionar o pedido ao grupo da ocupação
+        if (!pedidosPorOcupacaoMesa.has(chaveOcupacao)) {
+          pedidosPorOcupacaoMesa.set(chaveOcupacao, []);
         }
+        pedidosPorOcupacaoMesa.get(chaveOcupacao).push(pedido);
       }
+      
+      // Processar cada grupo para criar o pedido agrupado final
+      const pedidosAgrupados = [];
+      
+      pedidosPorOcupacaoMesa.forEach((grupoPedidos, chave) => {
+        if (grupoPedidos.length === 0) return;
+        
+        // Usar o pedido mais recente como base para o agrupamento
+        const pedidosOrdenados = [...grupoPedidos].sort((a, b) => 
+          new Date(b.dataPagamento || b.dataCriacao) - new Date(a.dataPagamento || a.dataCriacao)
+        );
+        
+        const pedidoBase = pedidosOrdenados[0];
+        const pedidosIds = grupoPedidos.map(p => p._id);
+        
+        // Calcular o valor total
+        const valorTotal = grupoPedidos.reduce((total, p) => total + (p.valorTotal || 0), 0);
+        
+        // Criar uma cópia do pedido base com as informações atualizadas
+        pedidoBase.valorTotal = valorTotal;
+        pedidoBase._pedidosAgrupados = pedidosIds;
+        
+        console.log(`Grupo ${chave}: ${pedidosIds.length} pedidos, valor total R$ ${valorTotal.toFixed(2)}`);
+        pedidosAgrupados.push(pedidoBase);
+      });
       
       // Retornar os pedidos agrupados
       res.status(200).json({
@@ -205,14 +229,15 @@ exports.createPedido = async (req, res) => {
       });
     }
     
-    // Criar o pedido
-    const pedido = new Pedido({
+    // Criar o objeto do novo pedido
+    const novoPedido = new Pedido({
       mesa: mesaId,
-      garcom: req.usuario._id,
+      garcom: req.usuario ? req.usuario._id : null,
       itens: itensValidados,
-      valorTotal,
-      observacao: observacao || '',
-      status: 'aberto'
+      observacao: req.body.observacao || '',
+      status: 'aberto',
+      valorTotal: valorTotal,
+      timestampOcupacao: mesa.ocupacaoAtual?.inicioAtendimento || new Date() // Guardar o timestamp da ocupação atual
     });
     
     // Se houver pagante especificado, adicionar o pedido a ele na mesa
@@ -222,13 +247,13 @@ exports.createPedido = async (req, res) => {
       
       if (paganteExistente) {
         // Adicionar o pedido ao pagante existente
-        paganteExistente.pedidos.push(pedido._id);
+        paganteExistente.pedidos.push(novoPedido._id);
       } else {
         // Criar novo pagante e adicionar o pedido
         mesa.pagantes.push({
           nome: pagante.nome || `Pagante ${mesa.pagantes.length + 1}`,
           identificador: pagante.identificador,
-          pedidos: [pedido._id]
+          pedidos: [novoPedido._id]
         });
       }
       
@@ -236,10 +261,10 @@ exports.createPedido = async (req, res) => {
     }
     
     // Salvar o pedido
-    await pedido.save();
+    await novoPedido.save();
     
     // Buscar o pedido com as relações populadas para retornar
-    const pedidoPopulado = await Pedido.findById(pedido._id)
+    const pedidoPopulado = await Pedido.findById(novoPedido._id)
       .populate('mesa', 'numero')
       .populate('garcom', 'nome')
       .populate('itens.item', 'nome categoria');
@@ -346,7 +371,15 @@ exports.fecharPedido = async (req, res) => {
 // Registrar pagamento
 exports.registrarPagamento = async (req, res) => {
   try {
-    const { metodoPagamento } = req.body;
+    const { 
+      metodoPagamento, 
+      valorPago,
+      troco, 
+      observacao,
+      pedidosIds,
+      taxaServico,
+      incluirTaxaServico
+    } = req.body;
     
     const pedido = await Pedido.findById(req.params.id);
     
@@ -371,15 +404,69 @@ exports.registrarPagamento = async (req, res) => {
       });
     }
     
-    // Registrar o usuário que está finalizando o pagamento
-    const usuarioId = req.usuario?._id;
-    await pedido.registrarPagamento(metodoPagamento, usuarioId);
+    // Se houver taxa de serviço, incluí-la no pedido
+    if (incluirTaxaServico && taxaServico > 0) {
+      pedido.taxaServico = taxaServico;
+      // Recalcular o valorFinal considerando a taxa de serviço
+      pedido.valorFinal = (pedido.valorTotal || 0) + taxaServico;
+      pedido.incluirTaxaServico = true;
+    } else {
+      // Se a taxa de serviço não for incluída, zerá-la
+      pedido.taxaServico = 0;
+      pedido.incluirTaxaServico = false;
+      pedido.valorFinal = pedido.valorTotal || 0;
+    }
     
-    res.status(200).json({
-      success: true,
-      message: 'Pagamento registrado com sucesso',
-      data: pedido
-    });
+    // Se há lista de múltiplos pedidos para pagar
+    if (pedidosIds && Array.isArray(pedidosIds) && pedidosIds.length > 0) {
+      // Registrar pagamento para todos os pedidos na lista
+      const resultados = [];
+      
+      for (const pedidoId of pedidosIds) {
+        if (pedidoId === req.params.id) continue; // Já estamos tratando este
+        
+        const outroPedido = await Pedido.findById(pedidoId);
+        if (!outroPedido) continue;
+        
+        // Aplicar taxa de serviço proporcional se solicitado
+        if (incluirTaxaServico && taxaServico > 0) {
+          // Distribuir a taxa proporcionalmente entre os pedidos
+          const proporcao = outroPedido.valorTotal / pedido.valorTotal;
+          outroPedido.taxaServico = taxaServico * proporcao;
+          outroPedido.valorFinal = (outroPedido.valorTotal || 0) + outroPedido.taxaServico;
+        }
+        
+        // Registrar o pagamento no pedido
+        const usuarioId = req.usuario?._id;
+        await outroPedido.registrarPagamento(metodoPagamento, usuarioId);
+        
+        resultados.push(outroPedido);
+      }
+      
+      // Registrar o usuário que está finalizando o pagamento para o pedido principal
+      const usuarioId = req.usuario?._id;
+      await pedido.registrarPagamento(metodoPagamento, usuarioId);
+      
+      resultados.push(pedido);
+      
+      res.status(200).json({
+        success: true,
+        message: 'Pagamento registrado com sucesso para todos os pedidos',
+        pedidoId: req.params.id,
+        data: resultados
+      });
+    } else {
+      // Registrar o usuário que está finalizando o pagamento
+      const usuarioId = req.usuario?._id;
+      await pedido.registrarPagamento(metodoPagamento, usuarioId);
+      
+      res.status(200).json({
+        success: true,
+        message: 'Pagamento registrado com sucesso',
+        pedidoId: req.params.id,
+        data: pedido
+      });
+    }
   } catch (error) {
     res.status(500).json({
       success: false,
@@ -516,61 +603,20 @@ exports.excluirRegistroPagamento = async (req, res) => {
       });
     }
     
-    // Verificar se o pedido original tem mesa
-    const mesaId = pedidoOriginal.mesa;
-    const dataPagamento = pedidoOriginal.dataPagamento;
+    // Excluir apenas o pedido específico, independentemente de ter mesa ou não
+    const resultado = await Pedido.findByIdAndUpdate(id, {
+      $set: {
+        excluidoDaLista: true,
+        excluidoPor: req.usuario?._id,
+        dataExclusao: new Date()
+      }
+    }, { new: true });
     
-    let resultado;
-    
-    // Se tiver mesa, excluir todos os pedidos da mesma mesa pagos na mesma data 
-    if (mesaId && dataPagamento) {
-      // Calcular o início e fim do dia do pagamento
-      const dataInicio = new Date(dataPagamento);
-      dataInicio.setHours(0, 0, 0, 0);
-      
-      const dataFim = new Date(dataPagamento);
-      dataFim.setHours(23, 59, 59, 999);
-      
-      // Buscar e marcar como excluídos todos os pedidos da mesma mesa e do mesmo dia
-      resultado = await Pedido.updateMany(
-        { 
-          mesa: mesaId,
-          status: 'pago',
-          dataPagamento: { $gte: dataInicio, $lte: dataFim }
-        },
-        {
-          $set: {
-            excluidoDaLista: true,
-            excluidoPor: req.usuario?._id,
-            dataExclusao: new Date()
-          }
-        }
-      );
-      
-      return res.status(200).json({
-        success: true,
-        message: `Todos os registros de pagamento desta mesa foram excluídos da lista com sucesso`,
-        data: {
-          excluidos: resultado.modifiedCount,
-          mesa: mesaId
-        }
-      });
-    } else {
-      // Caso não tenha mesa, excluir apenas o pedido individual
-      resultado = await Pedido.findByIdAndUpdate(id, {
-        $set: {
-          excluidoDaLista: true,
-          excluidoPor: req.usuario?._id,
-          dataExclusao: new Date()
-        }
-      }, { new: true });
-      
-      return res.status(200).json({
-        success: true,
-        message: 'Registro de pagamento excluído da lista com sucesso',
-        data: resultado
-      });
-    }
+    return res.status(200).json({
+      success: true,
+      message: 'Registro de pagamento excluído da lista com sucesso',
+      data: resultado
+    });
   } catch (error) {
     res.status(500).json({
       success: false,
@@ -726,10 +772,37 @@ exports.getPedidosByMesa = async (req, res) => {
   try {
     const { mesaId } = req.params;
     
-    const pedidos = await Pedido.find({ 
-      mesa: mesaId,
-      status: { $in: ['aberto', 'parcial', 'fechado'] }
-    })
+    // Buscar a mesa para obter a data de início da ocupação atual
+    const mesa = await Mesa.findById(mesaId);
+    if (!mesa) {
+      return res.status(404).json({
+        success: false,
+        message: 'Mesa não encontrada'
+      });
+    }
+    
+    // Se a mesa estiver ocupada, buscar somente pedidos da ocupação atual
+    let query = { mesa: mesaId, status: { $in: ['aberto', 'parcial', 'fechado'] } };
+    
+    if (mesa.status === 'ocupada' && mesa.ocupacaoAtual && mesa.ocupacaoAtual.inicioAtendimento) {
+      // Verificar se há pedidos com timestamp de ocupação
+      const timestampOcupacao = mesa.ocupacaoAtual.inicioAtendimento;
+      
+      // Filtrar pedidos da ocupação atual
+      // Primeiro tentamos filtrar pelo campo timestampOcupacao (para pedidos novos)
+      // Se não houver correspondência, usamos a data de criação como fallback
+      query.$or = [
+        { timestampOcupacao: timestampOcupacao },
+        { 
+          timestampOcupacao: null, 
+          dataCriacao: { $gte: timestampOcupacao } 
+        }
+      ];
+      
+      console.log(`Filtrando pedidos da mesa ${mesaId} com timestamp de ocupação: ${new Date(timestampOcupacao).toISOString()}`);
+    }
+    
+    const pedidos = await Pedido.find(query)
       .populate('garcom', 'nome')
       .populate('itens.item', 'nome categoria')
       .sort({ dataCriacao: -1 });
@@ -851,7 +924,7 @@ exports.updatePedidoStatus = async (req, res) => {
 exports.registrarPagamentoDividido = async (req, res) => {
   try {
     const { mesaId } = req.params;
-    const { pagantes, pedidos: pedidosIds } = req.body;
+    const { pagantes, pedidos: pedidosIds, taxaServico, incluirTaxaServico } = req.body;
     
     // Validar pagantes
     if (!pagantes || !Array.isArray(pagantes) || pagantes.length === 0) {
@@ -936,6 +1009,22 @@ exports.registrarPagamentoDividido = async (req, res) => {
     // Atualizar todos os pedidos
     const atualizacoes = pedidosFiltrados.map(async (pedido) => {
       pedido.status = 'pago';
+      pedido.pago = true; // Campo crucial para o sistema de comprovantes
+      
+      // Definir explicitamente se a taxa de serviço deve ser incluída
+      pedido.incluirTaxaServico = incluirTaxaServico === true;
+      
+      // Calcular a taxa de serviço apenas se a opção estiver ativada
+      if (incluirTaxaServico === true && taxaServico > 0) {
+        pedido.taxaServico = pedido.valorTotal * 0.1; // ou usar o valor passado: taxaServico
+      } else {
+        pedido.taxaServico = 0;
+      }
+      
+      // Calcular o valor final considerando a taxa (ou não)
+      pedido.valorFinal = pedido.incluirTaxaServico ? 
+        pedido.valorTotal + pedido.taxaServico : 
+        pedido.valorTotal;
       
       // Adicionar informações de pagamento
       if (!pedido.pagamento) {

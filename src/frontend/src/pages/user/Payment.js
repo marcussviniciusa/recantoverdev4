@@ -84,7 +84,8 @@ const Payment = () => {
     metodo: 'dinheiro',
     valor: '',
     troco: 0,
-    observacao: ''
+    observacao: '',
+    incluirTaxaServico: false
   });
   const [pagantes, setPagantes] = useState([]);
   const [openDivisaoDialog, setOpenDivisaoDialog] = useState(false);
@@ -140,7 +141,7 @@ const Payment = () => {
         setSelectedPedidos(pedidosAbertos.map(pedido => pedido._id));
         
         // Definir valor total como padrão
-        const valorTotal = calcularTotal(pedidosAbertos);
+        const valorTotal = calcularTotal();
         setPagamento(prev => ({
           ...prev,
           valor: valorTotal.toFixed(2)
@@ -153,18 +154,22 @@ const Payment = () => {
   };
   
   // Calcular total dos pedidos selecionados
-  const calcularTotal = (pedidosList = null) => {
+  const calcularTotal = (pedidosList = null, incluirTaxa = null) => {
     const lista = pedidosList || pedidos;
+    const adicionarTaxa = incluirTaxa !== null ? incluirTaxa : pagamento.incluirTaxaServico;
     
     if (selectedPedidos.length === 0) return 0;
     
-    return lista
+    const subtotal = lista
       .filter(pedido => selectedPedidos.includes(pedido._id))
       .reduce((total, pedido) => {
         return total + pedido.itens.reduce((subtotal, item) => {
           return subtotal + (item.preco * item.quantidade);
         }, 0);
       }, 0);
+    
+    // Adicionar 10% se a opção estiver marcada
+    return adicionarTaxa ? subtotal * 1.1 : subtotal;
   };
   
   // Toggle seleção de pedido
@@ -180,11 +185,7 @@ const Payment = () => {
       }
       
       // Atualizar valor do pagamento com base na nova seleção
-      const novoTotal = pedidos
-        .filter(pedido => newSelected.includes(pedido._id))
-        .reduce((total, pedido) => {
-          return total + calcularTotalPedido(pedido);
-        }, 0);
+      const novoTotal = calcularTotal();
       
       setPagamento(prev => ({
         ...prev,
@@ -235,34 +236,40 @@ const Payment = () => {
   };
   
   // Processar pagamento
-  const processarPagamento = async (tipo) => {
+  const processarPagamento = async (tipo = 'total') => {
+    setProcessando(true);
+    
     try {
-      setProcessando(true);
+      // Valores comuns para ambos os tipos de pagamento
+      const valorTotal = calcularTotal();
+      const valorTotalSemTaxa = calcularTotal(null, false);
+      const taxaServico = pagamento.incluirTaxaServico ? valorTotalSemTaxa * 0.1 : 0;
       
-      // Validar dados básicos
-      if (selectedPedidos.length === 0) {
-        throw new Error('Selecione pelo menos um pedido para pagamento');
-      }
-      
-      // Realizar o pagamento de acordo com o tipo
       if (tipo === 'total') {
-        // Pagamento total - processamento simplificado
-        const promises = selectedPedidos.map(pedidoId => {
-          return api.put(`/api/pedidos/${pedidoId}/pagar`, {
-            metodoPagamento: 'dinheiro', // Valor padrão simplificado
-            valor: calcularTotal(), // Valor total da conta
-            observacao: 'Pagamento registrado pelo sistema'
-          });
-        });
+        // Pagamento total
+        const formaPagamento = pagamento.metodo === 'credito' ? 'cartao_credito' : 
+                              pagamento.metodo === 'debito' ? 'cartao_debito' : pagamento.metodo;
         
-        const results = await Promise.all(promises);
+        const dadosPagamento = {
+          metodoPagamento: formaPagamento,
+          valorPago: parseFloat(pagamento.valor),
+          troco: pagamento.troco,
+          observacao: pagamento.observacao,
+          pedidosIds: selectedPedidos,
+          taxaServico, // Adiciona a taxa de serviço (0 se não incluída)
+          incluirTaxaServico: pagamento.incluirTaxaServico
+        };
         
-        // Verificar se todos os pagamentos foram bem-sucedidos
-        const allSuccess = results.every(res => res.data.success);
+        // Enviar requisição
+        const response = await api.post(`/api/pedidos/${selectedPedidos[0]}/registrar-pagamento`, dadosPagamento);
         
-        if (allSuccess) {
-          // Armazenar o ID do primeiro pedido pago para o comprovante
-          setPedidoPagoId(selectedPedidos[0]);
+        if (response.data.success) {
+          // Armazenar o ID do último pedido pago para o comprovante (geralmente mais recente)
+          // Isso ajuda a garantir que estamos usando um pedido que foi efetivamente marcado como pago
+          const ultimoPedidoPagoId = response.data.pedidoId;
+          
+          console.log('ID do pedido definido para comprovante:', ultimoPedidoPagoId);
+          setPedidoPagoId(ultimoPedidoPagoId);
           
           // Atualizar o estado para exibir comprovante
           setSucessoPagamento(true);
@@ -294,7 +301,7 @@ const Payment = () => {
           // Fechar o diálogo de confirmação
           setOpenConfirmacaoDialog(false);
         } else {
-          throw new Error('Não foi possível processar todos os pagamentos');
+          throw new Error(response.data.message || 'Falha ao processar pagamento');
         }
       } else if (tipo === 'dividido') {
         // Pagamento dividido simplificado
@@ -308,19 +315,28 @@ const Payment = () => {
             valor: totalPorPagante,
             itens: [] // Sem itens específicos na versão simplificada
           })),
-          pedidos: selectedPedidos
+          pedidos: selectedPedidos,
+          taxaServico, // Adiciona a taxa de serviço (0 se não incluída)
+          incluirTaxaServico: pagamento.incluirTaxaServico
         };
         
         // Enviar requisição
         const response = await api.post(`/api/pedidos/mesa/${mesaId}/pagar-dividido`, dadosPagamento);
         
         if (response.data.success) {
-          // Armazenar o ID do primeiro pedido pago para o comprovante
+          // Armazenar o ID do último pedido pago para o comprovante (geralmente mais recente e garantidamente marcado como pago)
+          let pedidoParaComprovante;
+          
           if (response.data.pedidos && response.data.pedidos.length > 0) {
-            setPedidoPagoId(response.data.pedidos[0]._id);
+            // Pegar o último pedido da lista retornada pelo backend
+            pedidoParaComprovante = response.data.pedidos[response.data.pedidos.length - 1]._id;
           } else {
-            setPedidoPagoId(selectedPedidos[0]);
+            // Fallback para o primeiro pedido selecionado
+            pedidoParaComprovante = selectedPedidos[0];
           }
+          
+          console.log('ID do pedido definido para comprovante (pagamento dividido):', pedidoParaComprovante);
+          setPedidoPagoId(pedidoParaComprovante);
           
           // Atualizar o estado para exibir comprovante
           setSucessoPagamento(true);
@@ -410,6 +426,51 @@ const Payment = () => {
               {pedidos.length}
             </Typography>
           </Grid>
+          
+          <Grid item xs={12}>
+            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mt: 1 }}>
+              <FormControlLabel
+                control={
+                  <Checkbox 
+                    checked={pagamento.incluirTaxaServico}
+                    onChange={(e) => {
+                      const novoIncluirTaxa = e.target.checked;
+                      setPagamento(prev => {
+                        // Recalcular o valor com base na nova configuração de taxa
+                        const novoValorTotal = calcularTotal(null, novoIncluirTaxa);
+                        return {
+                          ...prev,
+                          incluirTaxaServico: novoIncluirTaxa,
+                          valor: novoValorTotal.toFixed(2)
+                        };
+                      });
+                    }}
+                  />
+                }
+                label="Incluir taxa de serviço (10%)"
+              />
+            </Box>
+          </Grid>
+          
+          <Grid item xs={12}>
+            <Typography variant="body2" color="text.secondary">
+              Subtotal
+            </Typography>
+            <Typography variant="body1" fontWeight="medium">
+              R$ {calcularTotal(null, false).toFixed(2)}
+            </Typography>
+          </Grid>
+          
+          {pagamento.incluirTaxaServico && (
+            <Grid item xs={12}>
+              <Typography variant="body2" color="text.secondary">
+                Taxa de Serviço (10%)
+              </Typography>
+              <Typography variant="body1" fontWeight="medium">
+                R$ {(calcularTotal(null, false) * 0.1).toFixed(2)}
+              </Typography>
+            </Grid>
+          )}
           
           <Grid item xs={12}>
             <Typography variant="h6" fontWeight="bold" color="primary">

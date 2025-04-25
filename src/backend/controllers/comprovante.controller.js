@@ -16,11 +16,14 @@ exports.gerarComprovante = async (req, res) => {
       });
     }
     
-    // Buscar dados do pedido
+    // Buscar dados do pedido com populate completo para garantir dados precisos
     const pedido = await Pedido.findById(pedidoId)
-      .populate('itens.item')
-      .populate('mesa')
-      .populate('atendente', 'nome');
+      .populate({ path: 'itens.item', strictPopulate: false })
+      // Removido populate de itens.produto que não existe no schema
+      .populate({ path: 'mesa', strictPopulate: false })
+      .populate({ path: 'garcom', select: 'nome', strictPopulate: false })
+      .populate({ path: 'atendente', select: 'nome', strictPopulate: false })
+      .populate({ path: 'cliente', select: 'nome telefone email', strictPopulate: false });
     
     if (!pedido) {
       return res.status(404).json({
@@ -29,6 +32,19 @@ exports.gerarComprovante = async (req, res) => {
       });
     }
     
+    // Verificação robusta do status de pagamento
+    console.log(`[DEBUG] Pedido ID ${pedidoId} - Status: ${pedido.status}, Pago: ${pedido.pago}`);
+    
+    // Se o pedido estiver com status 'pago' mas o campo pago=false, vamos corrigir isso automaticamente
+    if (pedido.status === 'pago' && !pedido.pago) {
+      console.log(`[CORREÇÃO] Pedido ${pedidoId} está com status=pago mas campo pago=false. Corrigindo...`);
+      // Forçar a atualização do campo pago
+      pedido.pago = true;
+      await pedido.save();
+      console.log(`[CORREÇÃO] Campo pago atualizado com sucesso para o pedido ${pedidoId}`);
+    }
+    
+    // Verificar se o pedido está pago (após possível correção)
     if (!pedido.pago) {
       return res.status(400).json({
         success: false,
@@ -36,11 +52,40 @@ exports.gerarComprovante = async (req, res) => {
       });
     }
     
-    // Preparar dados para o comprovante
+    // Preparar dados completos e precisos para o comprovante
+    let pagamento = null;
+    
+    // Verificar se existe informação de pagamento e obter os dados mais completos possíveis
+    if (pedido.pagamento) {
+      pagamento = pedido.pagamento;
+    } else if (pedido.historicoPagamentos && pedido.historicoPagamentos.length > 0) {
+      // Se não houver pagamento direto, usar o último registro no histórico
+      pagamento = pedido.historicoPagamentos[pedido.historicoPagamentos.length - 1];
+      console.log('[INFO] Usando dados do histórico de pagamentos para o comprovante');
+    }
+    
+    // Priorizar dados do cliente vindos do pedido, com fallback para os dados adicionais
+    const cliente = {
+      nome: pedido.cliente?.nome || dadosAdicionais?.cliente?.nome || 'Cliente',
+      telefone: pedido.cliente?.telefone || dadosAdicionais?.cliente?.telefone || '',
+      email: pedido.cliente?.email || dadosAdicionais?.cliente?.email || ''
+    };
+    
+    console.log('[DEBUG Comprovante] Dados do pedido:', {
+      id: pedido._id,
+      incluirTaxaServico: pedido.incluirTaxaServico,
+      taxaServico: pedido.taxaServico,
+      valorTotal: pedido.total,
+      valorFinal: pedido.valorFinal
+    });
+    
     const dados = {
       pedido,
-      pagamento: pedido.pagamento,
-      cliente: dadosAdicionais?.cliente || null
+      pagamento,
+      cliente,
+      valorTotal: pedido.total || 0,
+      metodoPagamento: pagamento?.metodo || (pagamento?.divisao && pagamento?.divisao.length > 0 ? 'dividido' : 'não especificado'),
+      dataPagamento: pagamento?.data || pedido.dataAtualizacao || new Date()
     };
     
     // Gerar o PDF do comprovante
@@ -68,6 +113,7 @@ exports.gerarComprovante = async (req, res) => {
  */
 exports.enviarWhatsApp = async (req, res) => {
   try {
+    console.log('[DEBUG] Requisição recebida para enviar WhatsApp:', req.body);
     const { pedidoId, telefone, dadosAdicionais } = req.body;
     
     if (!pedidoId || !telefone) {
@@ -77,11 +123,14 @@ exports.enviarWhatsApp = async (req, res) => {
       });
     }
     
-    // Buscar dados do pedido
+    // Buscar dados do pedido com populate completo para garantir dados precisos
     const pedido = await Pedido.findById(pedidoId)
-      .populate('itens.item')
-      .populate('mesa')
-      .populate('atendente', 'nome');
+      .populate({ path: 'itens.item', strictPopulate: false })
+      // Removido populate de itens.produto que não existe no schema
+      .populate({ path: 'mesa', strictPopulate: false })
+      .populate({ path: 'garcom', select: 'nome', strictPopulate: false })
+      .populate({ path: 'atendente', select: 'nome', strictPopulate: false })
+      .populate({ path: 'cliente', select: 'nome telefone email', strictPopulate: false });
     
     if (!pedido) {
       return res.status(404).json({
@@ -90,6 +139,19 @@ exports.enviarWhatsApp = async (req, res) => {
       });
     }
     
+    // Verificação robusta do status de pagamento
+    console.log(`[DEBUG] Pedido ID ${pedidoId} - Status: ${pedido.status}, Pago: ${pedido.pago}`);
+    
+    // Se o pedido estiver com status 'pago' mas o campo pago=false, vamos corrigir isso automaticamente
+    if (pedido.status === 'pago' && !pedido.pago) {
+      console.log(`[CORREÇÃO] Pedido ${pedidoId} está com status=pago mas campo pago=false. Corrigindo...`);
+      // Forçar a atualização do campo pago
+      pedido.pago = true;
+      await pedido.save();
+      console.log(`[CORREÇÃO] Campo pago atualizado com sucesso para o pedido ${pedidoId}`);
+    }
+    
+    // Verificar se o pedido está pago (após possível correção)
     if (!pedido.pago) {
       return res.status(400).json({
         success: false,
@@ -97,11 +159,40 @@ exports.enviarWhatsApp = async (req, res) => {
       });
     }
     
-    // Preparar dados para o comprovante
+    // Preparar dados completos e precisos para o comprovante
+    let pagamento = null;
+    
+    // Verificar se existe informação de pagamento e obter os dados mais completos possíveis
+    if (pedido.pagamento) {
+      pagamento = pedido.pagamento;
+    } else if (pedido.historicoPagamentos && pedido.historicoPagamentos.length > 0) {
+      // Se não houver pagamento direto, usar o último registro no histórico
+      pagamento = pedido.historicoPagamentos[pedido.historicoPagamentos.length - 1];
+      console.log('[INFO] Usando dados do histórico de pagamentos para o comprovante');
+    }
+    
+    // Priorizar dados do cliente vindos do pedido, com fallback para os dados adicionais
+    const cliente = {
+      nome: pedido.cliente?.nome || dadosAdicionais?.cliente?.nome || 'Cliente',
+      telefone: pedido.cliente?.telefone || dadosAdicionais?.cliente?.telefone || '',
+      email: pedido.cliente?.email || dadosAdicionais?.cliente?.email || ''
+    };
+    
+    console.log('[DEBUG Comprovante] Dados do pedido:', {
+      id: pedido._id,
+      incluirTaxaServico: pedido.incluirTaxaServico,
+      taxaServico: pedido.taxaServico,
+      valorTotal: pedido.total,
+      valorFinal: pedido.valorFinal
+    });
+    
     const dados = {
       pedido,
-      pagamento: pedido.pagamento,
-      cliente: dadosAdicionais?.cliente || null
+      pagamento,
+      cliente,
+      valorTotal: pedido.total || 0,
+      metodoPagamento: pagamento?.metodo || (pagamento?.divisao && pagamento?.divisao.length > 0 ? 'dividido' : 'não especificado'),
+      dataPagamento: pagamento?.data || pedido.dataAtualizacao || new Date()
     };
     
     // Gerar o PDF do comprovante
@@ -148,11 +239,14 @@ exports.prepararImpressao = async (req, res) => {
       });
     }
     
-    // Buscar dados do pedido
+    // Buscar dados do pedido com populate completo para garantir dados precisos
     const pedido = await Pedido.findById(pedidoId)
-      .populate('itens.item')
-      .populate('mesa')
-      .populate('atendente', 'nome');
+      .populate({ path: 'itens.item', strictPopulate: false })
+      // Removido populate de itens.produto que não existe no schema
+      .populate({ path: 'mesa', strictPopulate: false })
+      .populate({ path: 'garcom', select: 'nome', strictPopulate: false })
+      .populate({ path: 'atendente', select: 'nome', strictPopulate: false })
+      .populate({ path: 'cliente', select: 'nome telefone email', strictPopulate: false });
     
     if (!pedido) {
       return res.status(404).json({
@@ -161,6 +255,19 @@ exports.prepararImpressao = async (req, res) => {
       });
     }
     
+    // Verificação robusta do status de pagamento
+    console.log(`[DEBUG] Pedido ID ${pedidoId} - Status: ${pedido.status}, Pago: ${pedido.pago}`);
+    
+    // Se o pedido estiver com status 'pago' mas o campo pago=false, vamos corrigir isso automaticamente
+    if (pedido.status === 'pago' && !pedido.pago) {
+      console.log(`[CORREÇÃO] Pedido ${pedidoId} está com status=pago mas campo pago=false. Corrigindo...`);
+      // Forçar a atualização do campo pago
+      pedido.pago = true;
+      await pedido.save();
+      console.log(`[CORREÇÃO] Campo pago atualizado com sucesso para o pedido ${pedidoId}`);
+    }
+    
+    // Verificar se o pedido está pago (após possível correção)
     if (!pedido.pago) {
       return res.status(400).json({
         success: false,
@@ -168,11 +275,40 @@ exports.prepararImpressao = async (req, res) => {
       });
     }
     
-    // Preparar dados para o comprovante
+    // Preparar dados completos e precisos para o comprovante
+    let pagamento = null;
+    
+    // Verificar se existe informação de pagamento e obter os dados mais completos possíveis
+    if (pedido.pagamento) {
+      pagamento = pedido.pagamento;
+    } else if (pedido.historicoPagamentos && pedido.historicoPagamentos.length > 0) {
+      // Se não houver pagamento direto, usar o último registro no histórico
+      pagamento = pedido.historicoPagamentos[pedido.historicoPagamentos.length - 1];
+      console.log('[INFO] Usando dados do histórico de pagamentos para o comprovante');
+    }
+    
+    // Priorizar dados do cliente vindos do pedido, com fallback para os dados adicionais
+    const cliente = {
+      nome: pedido.cliente?.nome || dadosAdicionais?.cliente?.nome || 'Cliente',
+      telefone: pedido.cliente?.telefone || dadosAdicionais?.cliente?.telefone || '',
+      email: pedido.cliente?.email || dadosAdicionais?.cliente?.email || ''
+    };
+    
+    console.log('[DEBUG Comprovante] Dados do pedido:', {
+      id: pedido._id,
+      incluirTaxaServico: pedido.incluirTaxaServico,
+      taxaServico: pedido.taxaServico,
+      valorTotal: pedido.total,
+      valorFinal: pedido.valorFinal
+    });
+    
     const dados = {
       pedido,
-      pagamento: pedido.pagamento,
-      cliente: dadosAdicionais?.cliente || null
+      pagamento,
+      cliente,
+      valorTotal: pedido.total || 0,
+      metodoPagamento: pagamento?.metodo || (pagamento?.divisao && pagamento?.divisao.length > 0 ? 'dividido' : 'não especificado'),
+      dataPagamento: pagamento?.data || pedido.dataAtualizacao || new Date()
     };
     
     // Preparar para impressão

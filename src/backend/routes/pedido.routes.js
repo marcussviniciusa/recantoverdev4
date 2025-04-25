@@ -14,6 +14,7 @@ router.put('/:id/item-status', pedidoController.updateItemStatus);
 router.put('/:id/status', pedidoController.updatePedidoStatus);
 router.put('/:id/fechar', pedidoController.fecharPedido);
 router.put('/:id/pagar', pedidoController.registrarPagamento);
+router.post('/:id/registrar-pagamento', pedidoController.registrarPagamento);
 router.post('/mesa/:mesaId/pagar-dividido', pedidoController.registrarPagamentoDividido);
 router.put('/:id/cancelar', pedidoController.cancelarPedido);
 router.put('/:id/cancelar-pagamento', pedidoController.cancelarPagamento);

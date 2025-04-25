@@ -134,6 +134,7 @@ const ComprovantePagamento = ({ open, onClose, pedidoId, mesaId }) => {
       }
     } catch (error) {
       console.error('Erro ao gerar comprovante:', error);
+      console.error('Detalhes completos do erro:', error.response?.data);
       setError(error.response?.data?.message || 'Erro ao gerar comprovante');
     } finally {
       setLoading(false);

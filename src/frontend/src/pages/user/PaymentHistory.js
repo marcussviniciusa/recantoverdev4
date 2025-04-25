@@ -360,7 +360,17 @@ const PaymentHistory = () => {
                       </Box>
                     </TableCell>
                     <TableCell>{formatDate(payment.dataPagamento || payment.dataCriacao)}</TableCell>
-                    <TableCell>{formatCurrency(payment.valorTotal)}</TableCell>
+                    <TableCell>
+                      {payment.taxaServico > 0 ? (
+                        <Tooltip title={`Inclui ${formatCurrency(payment.taxaServico)} de taxa de serviço`}>
+                          <Box>
+                            {formatCurrency(payment.valorFinal || (payment.valorTotal + payment.taxaServico))}
+                          </Box>
+                        </Tooltip>
+                      ) : (
+                        formatCurrency(payment.valorTotal)
+                      )}
+                    </TableCell>
                     <TableCell>
                       <Chip
                         size="small"

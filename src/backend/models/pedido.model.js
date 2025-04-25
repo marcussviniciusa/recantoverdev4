@@ -73,6 +73,12 @@ const pedidoSchema = new mongoose.Schema({
     type: Number,
     default: 0
   },
+  // Identificador único para rastrear a qual ocupação de mesa este pedido pertence
+  // Será preenchido com o timestamp de início da ocupação atual
+  timestampOcupacao: {
+    type: Date,
+    default: null
+  },
   metodoPagamento: {
     type: String,
     enum: ['', 'dinheiro', 'cartao_credito', 'cartao_debito', 'pix', 'outro'],
@@ -153,7 +159,11 @@ const pedidoSchema = new mongoose.Schema({
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User'
   },
-  dataConclusaoVisual: Date
+  dataConclusaoVisual: Date,
+  incluirTaxaServico: {
+    type: Boolean,
+    default: false
+  }
 }, {
   timestamps: true
 });
@@ -177,8 +187,12 @@ pedidoSchema.pre('save', function(next) {
   
   this.valorTotal = subtotal;
   
-  // Calcular taxa de serviço (padrão 10%)
-  this.taxaServico = subtotal * 0.1;
+  // Calcular taxa de serviço (padrão 10%) apenas se incluirTaxaServico for true
+  if (this.incluirTaxaServico === true) {
+    this.taxaServico = subtotal * 0.1;
+  } else {
+    this.taxaServico = 0;
+  }
   
   // Calcular valor final
   this.valorFinal = this.valorTotal + this.taxaServico - this.desconto;
@@ -220,7 +234,9 @@ pedidoSchema.methods.fecharPedido = function() {
 
 // Método para registrar pagamento
 pedidoSchema.methods.registrarPagamento = function(metodoPagamento, usuarioId) {
+  // Definir status e marcar como pago
   this.status = 'pago';
+  this.pago = true; // Campo crucial para o sistema de comprovantes
   this.metodoPagamento = metodoPagamento;
   this.dataPagamento = new Date();
   
@@ -228,6 +244,14 @@ pedidoSchema.methods.registrarPagamento = function(metodoPagamento, usuarioId) {
   if (usuarioId) {
     this.usuarioPagamento = usuarioId;
   }
+  
+  // Adicionar ao histórico de status
+  this.historicoStatus.push({
+    status: 'pago',
+    timestamp: new Date(),
+    responsavel: usuarioId,
+    observacao: 'Pagamento registrado pelo sistema'
+  });
   
   // Calcular tempo total do pedido
   this.tempoTotal = Math.round((this.dataPagamento - this.dataCriacao) / (1000 * 60)); // Em minutos

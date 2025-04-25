@@ -10,6 +10,21 @@ const qrCodeToBuffer = promisify(qrcode.toBuffer);
 
 class ComprovanteService {
   /**
+   * Função utilitária para formatar números com segurança
+   * @param {any} value - Valor a ser formatado
+   * @param {number} decimals - Número de casas decimais (padrão: 2)
+   * @returns {string} - Valor formatado com casas decimais
+   */
+  safeToFixed(value, decimals = 2) {
+    // Verifica se o valor existe e é um número
+    if (value === undefined || value === null || isNaN(Number(value))) {
+      // Retorna zero formatado com o número correto de casas decimais
+      return (0).toFixed(decimals);
+    }
+    // Certifica que o valor é tratado como número antes de chamar toFixed
+    return Number(value).toFixed(decimals);
+  }
+  /**
    * Gera um comprovante em PDF
    * @param {Object} dados - Dados do pedido e pagamento
    * @returns {Promise<string>} - Caminho do arquivo gerado
@@ -17,7 +32,10 @@ class ComprovanteService {
   async gerarComprovantePDF(dados) {
     return new Promise(async (resolve, reject) => {
       try {
-        const { pedido, pagamento, cliente } = dados;
+        // Extração segura dos dados com valores padrão
+        const pedido = dados.pedido || {};
+        const pagamento = dados.pagamento || {};
+        const cliente = dados.cliente || {};
         
         // Criar diretório para comprovantes se não existir
         const diretorio = path.join(__dirname, '../uploads/comprovantes');
@@ -69,7 +87,20 @@ class ComprovanteService {
         doc.fontSize(12).font('Helvetica-Bold').text('Dados do Pedido');
         doc.fontSize(10).font('Helvetica');
         doc.text(`Nº do Pedido: ${pedido._id}`);
-        doc.text(`Data: ${format(new Date(pedido.data), "dd/MM/yyyy 'às' HH:mm", { locale: ptBR })}`);
+        
+        // Formatação segura da data
+        let dataFormatada = 'Data não disponível';
+        try {
+          // Verificar se a data é válida
+          const dataObj = pedido.data ? new Date(pedido.data) : new Date();
+          if (!isNaN(dataObj.getTime())) {
+            dataFormatada = format(dataObj, "dd/MM/yyyy 'às' HH:mm", { locale: ptBR });
+          }
+        } catch (err) {
+          console.error('Erro ao formatar data do pedido:', err);
+        }
+        
+        doc.text(`Data: ${dataFormatada}`);
         doc.text(`Atendente: ${pedido.atendente?.nome || 'Não informado'}`);
         doc.text(`Mesa: ${pedido.mesa?.numero || 'Não informado'}`);
         
@@ -122,15 +153,21 @@ class ComprovanteService {
           }
           
           // Nome do item (com observação se houver)
-          let nomeItem = item.produto?.nome || 'Produto não especificado';
+          // Verificar todas as possíveis estruturas de dados para nomes de produtos
+          let nomeItem = item.produto?.nome || item.item?.nome || item.nome || 'Produto não especificado';
+          
+          // Adicionar observação se existir
           if (item.observacao) {
             nomeItem += `\n   Obs: ${item.observacao}`;
           }
           
           doc.text(nomeItem, 50, yInicial, { width: 240 });
           doc.text(item.quantidade.toString(), 300, yInicial);
-          doc.text(`R$ ${item.preco.toFixed(2)}`, 370, yInicial, { width: 80, align: 'right' });
-          doc.text(`R$ ${(item.quantidade * item.preco).toFixed(2)}`, 450, yInicial, { width: 80, align: 'right' });
+          doc.text(`R$ ${this.safeToFixed(item.preco)}`, 370, yInicial, { width: 80, align: 'right' });
+          // Calcular o total do item com segurança
+          const qtd = isNaN(Number(item.quantidade)) ? 1 : Number(item.quantidade);
+          const preco = isNaN(Number(item.preco)) ? 0 : Number(item.preco);
+          doc.text(`R$ ${this.safeToFixed(qtd * preco)}`, 450, yInicial, { width: 80, align: 'right' });
           
           // Incrementar Y com espaço extra para itens com observação
           const linhas = item.observacao ? 2 : 1;
@@ -147,77 +184,150 @@ class ComprovanteService {
         yInicial += 20;
         doc.font('Helvetica-Bold');
         doc.text('Subtotal:', 300, yInicial);
-        doc.text(`R$ ${pedido.subtotal.toFixed(2)}`, 450, yInicial, { width: 80, align: 'right' });
         
-        if (pedido.taxaServico > 0) {
+        // Cálculo do subtotal a partir dos itens se não estiver disponível diretamente
+        let subtotal = 0;
+        if (Array.isArray(pedido.itens)) {
+          subtotal = pedido.itens.reduce((sum, item) => {
+            const qtd = isNaN(Number(item.quantidade)) ? 1 : Number(item.quantidade);
+            const preco = isNaN(Number(item.preco)) ? 0 : Number(item.preco);
+            return sum + (qtd * preco);
+          }, 0);
+        }
+        
+        // Usar o valorTotal ou o subtotal calculado
+        const subtotalExibir = pedido.valorTotal || subtotal;
+        doc.text(`R$ ${this.safeToFixed(subtotalExibir)}`, 450, yInicial, { width: 80, align: 'right' });
+        
+        // Verificar se a taxa de serviço existe e é maior que zero
+        const taxaServico = typeof pedido.taxaServico === 'number' ? pedido.taxaServico : 0;
+        if (taxaServico > 0 && pedido.incluirTaxaServico === true) {
           yInicial += 20;
           doc.text('Taxa de Serviço (10%):', 300, yInicial);
-          doc.text(`R$ ${pedido.taxaServico.toFixed(2)}`, 450, yInicial, { width: 80, align: 'right' });
+          doc.text(`R$ ${this.safeToFixed(taxaServico)}`, 450, yInicial, { width: 80, align: 'right' });
         }
         
-        if (pedido.desconto > 0) {
+        // Verificar se o desconto existe e é maior que zero
+        const desconto = typeof pedido.desconto === 'number' ? pedido.desconto : 0;
+        if (desconto > 0) {
           yInicial += 20;
           doc.text('Desconto:', 300, yInicial);
-          doc.text(`R$ ${pedido.desconto.toFixed(2)}`, 450, yInicial, { width: 80, align: 'right' });
+          doc.text(`R$ ${this.safeToFixed(desconto)}`, 450, yInicial, { width: 80, align: 'right' });
         }
         
-        yInicial += 20;
-        doc.fontSize(12);
+        // Destacando melhor o total
+        yInicial += 30;
+        doc.moveTo(290, yInicial-5)
+           .lineTo(530, yInicial-5)
+           .stroke();
+           
+        doc.fontSize(14).fillColor('#000');
+        doc.font('Helvetica-Bold');
         doc.text('TOTAL:', 300, yInicial);
-        doc.text(`R$ ${pedido.total.toFixed(2)}`, 450, yInicial, { width: 80, align: 'right' });
+        
+        // Calcular o total final com base em todos os valores disponíveis
+        // Prioridade para valorFinal, depois calcula com base em outros campos
+        let totalFinal;
+        if (typeof pedido.valorFinal === 'number' && pedido.valorFinal > 0) {
+          totalFinal = pedido.valorFinal;
+        } else if (typeof pedido.valorTotal === 'number') {
+          // Verificar se a taxa de serviço deve ser incluída
+          if (pedido.incluirTaxaServico === true) {
+            totalFinal = pedido.valorTotal + taxaServico - desconto;
+          } else {
+            totalFinal = pedido.valorTotal - desconto;
+          }
+        } else if (subtotalExibir) {
+          // Verificar se a taxa de serviço deve ser incluída
+          if (pedido.incluirTaxaServico === true) {
+            totalFinal = subtotalExibir + taxaServico - desconto;
+          } else {
+            totalFinal = subtotalExibir - desconto;
+          }
+        } else {
+          // Última alternativa - usar o subtotal calculado
+          // Verificar se a taxa de serviço deve ser incluída
+          if (pedido.incluirTaxaServico === true) {
+            totalFinal = subtotal + taxaServico - desconto;
+          } else {
+            totalFinal = subtotal - desconto;
+          }
+        }
+        
+        // Se o pagamento tem valorPago definido, usar este como valor final
+        if (pagamento && typeof pagamento.valorPago === 'number' && pagamento.valorPago > 0) {
+          totalFinal = pagamento.valorPago;
+        }
+        
+        doc.text(`R$ ${this.safeToFixed(totalFinal)}`, 450, yInicial, { width: 80, align: 'right' });
+        
+        doc.moveTo(290, yInicial+20)
+           .lineTo(530, yInicial+20)
+           .stroke();
+        doc.fillColor('#000');
         
         // Dados do pagamento
         yInicial += 40;
         doc.fontSize(12).text('Pagamento', 50, yInicial);
         yInicial += 20;
         
-        if (pagamento.divisao && pagamento.divisao.length > 0) {
+        // Verifica se o pagamento existe e possui informações
+        if (pagamento && pagamento.divisao && Array.isArray(pagamento.divisao) && pagamento.divisao.length > 0) {
           // Caso de pagamento dividido
           doc.fontSize(10).font('Helvetica');
           doc.text('Pagamento dividido:', 50, yInicial);
           yInicial += 20;
           
           pagamento.divisao.forEach((parte, index) => {
-            doc.text(`Parte ${index + 1}: R$ ${parte.valor.toFixed(2)} (${this.formatarMetodoPagamento(parte.metodo)})`, 70, yInicial);
+            // Acessa valores com segurança
+            const valor = parte && parte.valor ? parte.valor : 0;
+            const metodo = parte && parte.metodo ? parte.metodo : 'não especificado';
+            doc.text(`Parte ${index + 1}: R$ ${this.safeToFixed(valor)} (${this.formatarMetodoPagamento(metodo)})`, 70, yInicial);
             yInicial += 20;
           });
         } else {
-          // Pagamento único
+          // Pagamento único (ou dados de pagamento incompletos)
           doc.fontSize(10).font('Helvetica');
-          doc.text(`Método: ${this.formatarMetodoPagamento(pagamento.metodo)}`, 50, yInicial);
-          yInicial += 20;
-          doc.text(`Valor Pago: R$ ${pagamento.valorPago.toFixed(2)}`, 50, yInicial);
+          // Usa um valor padrão caso o método não exista
+          const metodo = pagamento && pagamento.metodo ? pagamento.metodo : 'não especificado';
+          doc.text(`Método: ${this.formatarMetodoPagamento(metodo)}`, 50, yInicial);
           yInicial += 20;
           
-          if (pagamento.troco > 0) {
-            doc.text(`Troco: R$ ${pagamento.troco.toFixed(2)}`, 50, yInicial);
+          // Usa o safeToFixed para garantir que mesmo sem valorPago o PDF é gerado
+          doc.text(`Valor Pago: R$ ${this.safeToFixed(pagamento.valorPago)}`, 50, yInicial);
+          yInicial += 20;
+          
+          // Verifica se o troco existe e é maior que zero
+          if (pagamento && pagamento.troco && pagamento.troco > 0) {
+            doc.text(`Troco: R$ ${this.safeToFixed(pagamento.troco)}`, 50, yInicial);
             yInicial += 20;
           }
         }
         
         // Data e hora do pagamento
         yInicial += 20;
-        doc.text(`Pagamento realizado em: ${format(new Date(pagamento.data), "dd/MM/yyyy 'às' HH:mm", { locale: ptBR })}`, 50, yInicial);
-        
-        // QR Code para validação (pode ser link para sistema online)
+        // Formatação segura da data do pagamento
+        let dataPagamento = 'Data não disponível';
         try {
-          const qrCodeData = `https://recantoverde.com.br/validar/${pedido._id}`;
-          const qrBuffer = await qrCodeToBuffer(qrCodeData);
-          
-          // Verificar se precisa de nova página
-          if (yInicial > 650) {
-            doc.addPage();
-            yInicial = 50;
+          // Verificar se a data é válida
+          if (pagamento && pagamento.data) {
+            const dataObj = new Date(pagamento.data);
+            if (!isNaN(dataObj.getTime())) {
+              dataPagamento = format(dataObj, "dd/MM/yyyy 'às' HH:mm", { locale: ptBR });
+            }
           } else {
-            yInicial += 40;
+            // Se não existir data de pagamento, usa a data atual
+            dataPagamento = format(new Date(), "dd/MM/yyyy 'às' HH:mm", { locale: ptBR });
           }
-          
-          doc.image(qrBuffer, 200, yInicial, { width: 150 });
-          yInicial += 160;
-          doc.fontSize(8).text('Escaneie o QR Code para validar este comprovante', { align: 'center' });
         } catch (err) {
-          console.error('Erro ao gerar QR Code:', err);
+          console.error('Erro ao formatar data do pagamento:', err);
         }
+        
+        doc.text(`Pagamento realizado em: ${dataPagamento}`, 50, yInicial);
+        
+        // QR Code removido conforme solicitação
+        // Adicionamos mais espaço para destaque do total
+        yInicial += 20;
         
         // Rodapé
         doc.fontSize(8);
@@ -255,8 +365,45 @@ class ComprovanteService {
    * @param {Object} dados - Dados adicionais para mensagem
    * @returns {Promise<Object>} - Resultado do envio
    */
+  /**
+   * Verifica se o comprovante está com todos os dados necessários
+   * @param {Object} dados - Dados do comprovante
+   * @returns {Object} - Dados validados e complementados
+   */
+  _validarDadosComprovante(dados) {
+    // Clone os dados para não modificar o original
+    const dadosValidados = { ...dados };
+    
+    // Garantir que as estruturas básicas existem
+    if (!dadosValidados.pedido) dadosValidados.pedido = {};
+    if (!dadosValidados.pagamento) dadosValidados.pagamento = {};
+    if (!dadosValidados.cliente) dadosValidados.cliente = {};
+    
+    // Garantir que pagamento tem todas as subpropriedades essenciais inicializadas
+    if (!dadosValidados.pagamento.divisao) dadosValidados.pagamento.divisao = [];
+    if (!dadosValidados.pagamento.metodo) dadosValidados.pagamento.metodo = null;
+    if (!dadosValidados.pagamento.valorPago) dadosValidados.pagamento.valorPago = 0;
+    
+    // Garantir que pedido tem subpropriedades inicializadas
+    if (!dadosValidados.pedido.itens) dadosValidados.pedido.itens = [];
+    if (!dadosValidados.pedido.total) dadosValidados.pedido.total = 0;
+    
+    // Registrar no log se faltar informações críticas
+    if (!dadosValidados.pedido._id) {
+      console.log('AVISO: ID do pedido não fornecido para envio de comprovante');
+    }
+    
+    if (!dadosValidados.pedido.total && !dadosValidados.pagamento.valorPago) {
+      console.log('AVISO: Valor do pedido ou pagamento não fornecido para envio de comprovante');
+    }
+    
+    return dadosValidados;
+  }
+  
   async enviarComprovanteWhatsApp(telefone, caminhoArquivo, dados) {
     try {
+      // Validar e complementar dados do comprovante
+      dados = this._validarDadosComprovante(dados);
       // Validar número de telefone (remover caracteres não numéricos)
       telefone = telefone.replace(/\D/g, '');
       
@@ -270,45 +417,114 @@ class ComprovanteService {
         throw new Error('Número de telefone inválido. Formato esperado: 55DDDNÚMERO');
       }
       
-      // Montar a mensagem
-      const mensagem = `*Recanto Verde* 🌿\n\n` +
+      // Extrair dados importantes com validação
+      const pedido = dados.pedido || {};
+      const pagamento = dados.pagamento || {};
+      
+      // Obter informações reais do pedido
+      const valorTotal = pagamento.valorPago || pedido.total || 0;
+      
+      // Obter data do pagamento ou data do pedido ou data atual
+      let dataPagamento;
+      try {
+        if (pagamento && pagamento.data) {
+          dataPagamento = format(new Date(pagamento.data), "dd/MM/yyyy 'às' HH:mm", { locale: ptBR });
+        } else if (pedido && pedido.data) {
+          dataPagamento = format(new Date(pedido.data), "dd/MM/yyyy 'às' HH:mm", { locale: ptBR });
+        } else {
+          dataPagamento = format(new Date(), "dd/MM/yyyy 'às' HH:mm", { locale: ptBR });
+        }
+      } catch (err) {
+        console.log('Erro ao formatar data para WhatsApp:', err);
+        dataPagamento = format(new Date(), "dd/MM/yyyy 'às' HH:mm", { locale: ptBR });
+      }
+      
+      // Obter método de pagamento
+      let metodoPagamento = 'Não especificado';
+      if (pagamento && pagamento.metodo) {
+        metodoPagamento = this.formatarMetodoPagamento(pagamento.metodo);
+      } else if (pagamento && pagamento.divisao && Array.isArray(pagamento.divisao) && pagamento.divisao.length > 0) {
+        metodoPagamento = 'Pagamento dividido';
+      }
+      
+      // Resumo dos itens (limitado a 3 para não deixar a mensagem muito longa)
+      let resumoItens = '';
+      if (pedido.itens && Array.isArray(pedido.itens) && pedido.itens.length > 0) {
+        try {
+          const itensExibir = pedido.itens.slice(0, 3); // Limite de 3 itens para não sobrecarregar a mensagem
+          resumoItens = itensExibir.map(item => {
+            // Buscar o nome do produto de várias possíveis fontes
+            let nome = 'Produto';
+            try {
+              if (item.produto && typeof item.produto === 'object' && item.produto.nome) {
+                nome = item.produto.nome;
+              } else if (item.item && typeof item.item === 'object' && item.item.nome) {
+                nome = item.item.nome;
+              } else if (item.nome) {
+                nome = item.nome;
+              } else if (typeof item === 'string') {
+                nome = 'Item ' + item.substring(0, 8) + '...'; // Mostrar parte do ID se for string
+              }
+            } catch (itemErr) {
+              console.log('Erro ao processar nome do item:', itemErr);
+            }
+            
+            // Buscar a quantidade, com valor padrão 1
+            const qtd = item.quantidade || 1;
+            return `- ${qtd}x ${nome}`;
+          }).join('\n');
+          
+          if (pedido.itens.length > 3) {
+            resumoItens += `\n- ...e mais ${pedido.itens.length - 3} item(ns)`;
+          }
+        } catch (err) {
+          console.log('Erro ao processar resumo de itens:', err);
+          resumoItens = '- Itens não disponíveis (erro de processamento)';
+        }
+      }
+      
+      // Montar a mensagem como caption com informações mais ricas e precisas
+      const caption = `*Recanto Verde* 🌿\n\n` +
         `Olá, ${dados.cliente?.nome || 'Cliente'}! Aqui está o comprovante do seu pagamento.\n\n` +
-        `*Pedido:* ${dados.pedido._id}\n` +
-        `*Valor:* R$ ${dados.pagamento.valorPago.toFixed(2)}\n` +
-        `*Data:* ${format(new Date(), "dd/MM/yyyy 'às' HH:mm", { locale: ptBR })}\n\n` +
-        `Agradecemos sua preferência! 😊`;
+        `*Pedido:* ${pedido._id || 'N/A'}\n` +
+        `*Valor Total:* R$ ${this.safeToFixed(valorTotal)}\n` +
+        `*Método:* ${metodoPagamento}\n` +
+        `*Data:* ${dataPagamento}\n` +
+        (resumoItens ? `\n*Itens:*\n${resumoItens}\n` : '') +
+        `\nAgradecemos sua preferência! 😊\n` +
+        `Comprovante completo em anexo.`;
       
-      // Verificar se há API key e token configurados
+      // Verificar se há API key e outras configurações
       const whatsappApiKey = process.env.WHATSAPP_API_KEY;
-      const whatsappInstanceId = process.env.WHATSAPP_INSTANCE_ID;
+      const whatsappInstance = process.env.WHATSAPP_INSTANCE;
+      const whatsappApiDomain = process.env.WHATSAPP_API_DOMAIN;
       
-      if (!whatsappApiKey || !whatsappInstanceId) {
-        throw new Error('Credenciais da API de WhatsApp não configuradas.');
+      if (!whatsappApiKey || !whatsappInstance || !whatsappApiDomain) {
+        throw new Error('Credenciais ou configurações da API de WhatsApp incompletas.');
       }
       
       // Ler o arquivo como base64
       const fileBuffer = fs.readFileSync(caminhoArquivo);
       const fileBase64 = fileBuffer.toString('base64');
       
-      // Enviar mensagem via API WhatsApp (exemplo usando API externa)
+      // Preparar o nome do arquivo
+      const fileName = `Comprovante_Recanto_Verde_${new Date().getTime()}.pdf`;
+      
+      // Enviar mensagem via Evolution API
       const response = await axios.post(
-        `https://api.whatsapp.com/v1/messages`, 
+        `https://${whatsappApiDomain}/message/sendMedia/${whatsappInstance}`,
         {
-          to: telefone,
-          type: 'document',
-          document: {
-            filename: `Comprovante_Recanto_Verde_${new Date().getTime()}.pdf`,
-            mimetype: 'application/pdf',
-            data: fileBase64
-          },
-          caption: mensagem
+          number: telefone,
+          mediatype: "document",
+          mimetype: "application/pdf",
+          media: fileBase64,
+          fileName: fileName,
+          caption: caption
         },
         {
           headers: {
-            'Authorization': `Bearer ${whatsappApiKey}`,
-            'Content-Type': 'application/json',
-            'Accept': 'application/json',
-            'X-Instance-Id': whatsappInstanceId
+            'apikey': whatsappApiKey,
+            'Content-Type': 'application/json'
           }
         }
       );
@@ -371,21 +587,25 @@ class ComprovanteService {
   }
   
   /**
-   * Formata o método de pagamento para exibição
-   * @param {string} metodo - Código do método de pagamento
+   * Formata o método de pagamento
+   * @param {string} metodo - Método de pagamento (código)
    * @returns {string} - Nome formatado do método
    */
   formatarMetodoPagamento(metodo) {
+    // Verifica se o método foi fornecido
+    if (!metodo) return 'Não especificado';
+    
     const metodos = {
       'dinheiro': 'Dinheiro',
       'credito': 'Cartão de Crédito',
       'debito': 'Cartão de Débito',
       'pix': 'PIX',
+      'transferencia': 'Transferência Bancária',
       'vale': 'Vale-Refeição/Alimentação',
       'outros': 'Outros'
     };
     
-    return metodos[metodo] || 'Não especificado';
+    return metodos[metodo] || metodo || 'Não especificado';
   }
 }
 
