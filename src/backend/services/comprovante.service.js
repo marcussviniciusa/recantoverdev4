@@ -101,7 +101,7 @@ class ComprovanteService {
         }
         
         doc.text(`Data: ${dataFormatada}`);
-        doc.text(`Atendente: ${pedido.usuarioPagamento?.nome || pedido.garcom?.nome || 'Não informado'}`);
+        // Removido campo de atendente
         doc.text(`Mesa: ${pedido.mesa?.numero || 'Não informado'}`);
         
         // Dados do cliente (se fornecidos)
@@ -180,78 +180,20 @@ class ComprovanteService {
            .lineTo(550, yInicial)
            .stroke();
         
-        // Totais
-        yInicial += 20;
-        doc.font('Helvetica-Bold');
-        doc.text('Subtotal:', 300, yInicial);
-        
-        // Cálculo do subtotal a partir dos itens se não estiver disponível diretamente
-        let subtotal = 0;
-        if (Array.isArray(pedido.itens)) {
-          subtotal = pedido.itens.reduce((sum, item) => {
-            const qtd = isNaN(Number(item.quantidade)) ? 1 : Number(item.quantidade);
-            const preco = isNaN(Number(item.preco)) ? 0 : Number(item.preco);
-            return sum + (qtd * preco);
+        // Calcular o total final que pode vir de itens ou valor já calculado
+        let totalFinal = 0;
+        // Somar os itens
+        if (pedido.itens && Array.isArray(pedido.itens)) {
+          totalFinal = pedido.itens.reduce((total, item) => {
+            const quantidade = item.quantidade || 1;
+            const preco = item.preco || 0;
+            return total + (quantidade * preco);
           }, 0);
         }
         
-        // Usar o valorTotal ou o subtotal calculado
-        const subtotalExibir = pedido.valorTotal || subtotal;
-        doc.text(`R$ ${this.safeToFixed(subtotalExibir)}`, 450, yInicial, { width: 80, align: 'right' });
-        
-        // Verificar se a taxa de serviço existe e é maior que zero
-        const taxaServico = typeof pedido.taxaServico === 'number' ? pedido.taxaServico : 0;
-        if (taxaServico > 0 && pedido.incluirTaxaServico === true) {
-          yInicial += 20;
-          doc.text('Taxa de Serviço (10%):', 300, yInicial);
-          doc.text(`R$ ${this.safeToFixed(taxaServico)}`, 450, yInicial, { width: 80, align: 'right' });
-        }
-        
-        // Verificar se o desconto existe e é maior que zero
-        const desconto = typeof pedido.desconto === 'number' ? pedido.desconto : 0;
-        if (desconto > 0) {
-          yInicial += 20;
-          doc.text('Desconto:', 300, yInicial);
-          doc.text(`R$ ${this.safeToFixed(desconto)}`, 450, yInicial, { width: 80, align: 'right' });
-        }
-        
-        // Destacando melhor o total
-        yInicial += 30;
-        doc.moveTo(290, yInicial-5)
-           .lineTo(530, yInicial-5)
-           .stroke();
-           
-        doc.fontSize(14).fillColor('#000');
-        doc.font('Helvetica-Bold');
-        doc.text('TOTAL:', 300, yInicial);
-        
-        // Calcular o total final com base em todos os valores disponíveis
-        // Prioridade para valorFinal, depois calcula com base em outros campos
-        let totalFinal;
-        if (typeof pedido.valorFinal === 'number' && pedido.valorFinal > 0) {
-          totalFinal = pedido.valorFinal;
-        } else if (typeof pedido.valorTotal === 'number') {
-          // Verificar se a taxa de serviço deve ser incluída
-          if (pedido.incluirTaxaServico === true) {
-            totalFinal = pedido.valorTotal + taxaServico - desconto;
-          } else {
-            totalFinal = pedido.valorTotal - desconto;
-          }
-        } else if (subtotalExibir) {
-          // Verificar se a taxa de serviço deve ser incluída
-          if (pedido.incluirTaxaServico === true) {
-            totalFinal = subtotalExibir + taxaServico - desconto;
-          } else {
-            totalFinal = subtotalExibir - desconto;
-          }
-        } else {
-          // Última alternativa - usar o subtotal calculado
-          // Verificar se a taxa de serviço deve ser incluída
-          if (pedido.incluirTaxaServico === true) {
-            totalFinal = subtotal + taxaServico - desconto;
-          } else {
-            totalFinal = subtotal - desconto;
-          }
+        // Se o pedido tem um total definido, priorizar esse valor
+        if (pedido.total) {
+          totalFinal = pedido.total;
         }
         
         // Se o pagamento tem valorPago definido, usar este como valor final
@@ -259,75 +201,13 @@ class ComprovanteService {
           totalFinal = pagamento.valorPago;
         }
         
-        doc.text(`R$ ${this.safeToFixed(totalFinal)}`, 450, yInicial, { width: 80, align: 'right' });
+        // Adicionar espaço suficiente após a linha de divisão
+        yInicial += 30;
         
-        doc.moveTo(290, yInicial+20)
-           .lineTo(530, yInicial+20)
-           .stroke();
-        doc.fillColor('#000');
+        // Valor total
+        doc.fontSize(14).font('Helvetica-Bold').text(`Total: R$ ${this.safeToFixed(totalFinal)}`, 50, yInicial, { align: 'right' });
         
-        // Dados do pagamento
-        yInicial += 40;
-        doc.fontSize(12).text('Pagamento', 50, yInicial);
-        yInicial += 20;
-        
-        // Verifica se o pagamento existe e possui informações
-        if (pagamento && pagamento.divisao && Array.isArray(pagamento.divisao) && pagamento.divisao.length > 0) {
-          // Caso de pagamento dividido
-          doc.fontSize(10).font('Helvetica');
-          doc.text('Pagamento dividido:', 50, yInicial);
-          yInicial += 20;
-          
-          pagamento.divisao.forEach((parte, index) => {
-            // Acessa valores com segurança
-            const valor = parte && parte.valor ? parte.valor : 0;
-            const metodo = parte && parte.metodo ? parte.metodo : 'não especificado';
-            doc.text(`Parte ${index + 1}: R$ ${this.safeToFixed(valor)} (${this.formatarMetodoPagamento(metodo)})`, 70, yInicial);
-            yInicial += 20;
-          });
-        } else {
-          // Pagamento único (ou dados de pagamento incompletos)
-          doc.fontSize(10).font('Helvetica');
-          // Usa um valor padrão caso o método não exista
-          const metodo = pagamento && pagamento.metodo ? pagamento.metodo : 'não especificado';
-          doc.text(`Método: ${this.formatarMetodoPagamento(metodo)}`, 50, yInicial);
-          yInicial += 20;
-          
-          // Usa o safeToFixed para garantir que mesmo sem valorPago o PDF é gerado
-          doc.text(`Valor Pago: R$ ${this.safeToFixed(pagamento.valorPago)}`, 50, yInicial);
-          yInicial += 20;
-          
-          // Verifica se o troco existe e é maior que zero
-          if (pagamento && pagamento.troco && pagamento.troco > 0) {
-            doc.text(`Troco: R$ ${this.safeToFixed(pagamento.troco)}`, 50, yInicial);
-            yInicial += 20;
-          }
-        }
-        
-        // Data e hora do pagamento
-        yInicial += 20;
-        // Formatação segura da data do pagamento
-        let dataPagamento = 'Data não disponível';
-        try {
-          // Verificar se a data é válida
-          if (pagamento && pagamento.data) {
-            const dataObj = new Date(pagamento.data);
-            if (!isNaN(dataObj.getTime())) {
-              dataPagamento = format(dataObj, "dd/MM/yyyy 'às' HH:mm", { locale: ptBR });
-            }
-          } else {
-            // Se não existir data de pagamento, usa a data atual
-            dataPagamento = format(new Date(), "dd/MM/yyyy 'às' HH:mm", { locale: ptBR });
-          }
-        } catch (err) {
-          console.error('Erro ao formatar data do pagamento:', err);
-        }
-        
-        doc.text(`Pagamento realizado em: ${dataPagamento}`, 50, yInicial);
-        
-        // QR Code removido conforme solicitação
-        // Adicionamos mais espaço para destaque do total
-        yInicial += 20;
+        doc.moveDown(2);
         
         // Rodapé
         doc.fontSize(8);
@@ -485,11 +365,9 @@ class ComprovanteService {
       
       // Montar a mensagem como caption com informações mais ricas e precisas
       const caption = `*Recanto Verde* 🌿\n\n` +
-        `Olá, ${dados.cliente?.nome || 'Cliente'}! Aqui está o comprovante do seu pagamento.\n\n` +
+        `Olá, ${dados.cliente?.nome || 'Cliente'}! Aqui está o comprovante do seu pedido.\n\n` +
         `*Pedido:* ${pedido._id || 'N/A'}\n` +
         `*Valor Total:* R$ ${this.safeToFixed(valorTotal)}\n` +
-        `*Método:* ${metodoPagamento}\n` +
-        `*Data:* ${dataPagamento}\n` +
         (resumoItens ? `\n*Itens:*\n${resumoItens}\n` : '') +
         `\nAgradecemos sua preferência! 😊\n` +
         `Comprovante completo em anexo.`;
